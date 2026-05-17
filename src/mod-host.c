@@ -69,7 +69,6 @@
 #include "socket.h"
 #include "protocol.h"
 #include "completer.h"
-#include "monitor.h"
 #include "monitor/monitor-client.h"
 #include "zix/thread.h"
 #include "info.h"
@@ -264,18 +263,6 @@ static void effects_get_param_cb(proto_t *proto)
     protocol_response(buffer, proto);
 }
 
-static void effects_monitor_param_cb(proto_t *proto)
-{
-    int resp;
-    if (monitor_status())
-        resp = effects_monitor_parameter(atoi(proto->list[1]), proto->list[2],
-                                         proto->list[3], atof(proto->list[4]));
-    else
-        resp = -1;
-
-    protocol_response_int(resp, proto);
-}
-
 static void effects_flush_params_cb(proto_t *proto)
 {
     int resp;
@@ -391,17 +378,6 @@ static void effects_set_beats_per_bar_cb(proto_t *proto)
 
     bpb = atof(proto->list[1]);
     resp = effects_set_beats_per_bar(bpb);
-
-    protocol_response_int(resp, proto);
-}
-
-static void monitor_addr_set_cb(proto_t *proto)
-{
-    int resp;
-    if (atoi(proto->list[3]) == 1)
-        resp = monitor_start(proto->list[1], atoi(proto->list[2]));
-    else
-        resp = monitor_stop();
 
     protocol_response_int(resp, proto);
 }
@@ -1030,7 +1006,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(EFFECT_BYPASS, effects_bypass_cb);
     protocol_add_command(EFFECT_PARAM_SET, effects_set_param_cb);
     protocol_add_command(EFFECT_PARAM_GET, effects_get_param_cb);
-    protocol_add_command(EFFECT_PARAM_MON, effects_monitor_param_cb);
     protocol_add_command(EFFECT_PARAMS_FLUSH, effects_flush_params_cb);
     protocol_add_command(EFFECT_PRE_RUN, effects_pre_run_cb);
     protocol_add_command(EFFECT_PATCH_GET, effects_get_property_cb);
@@ -1038,7 +1013,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(EFFECT_LICENSEE, effects_licensee_cb);
     protocol_add_command(EFFECT_SET_BPM, effects_set_beats_per_minute_cb);
     protocol_add_command(EFFECT_SET_BPB, effects_set_beats_per_bar_cb);
-    protocol_add_command(MONITOR_ADDR_SET, monitor_addr_set_cb);
     protocol_add_command(MONITOR_OUTPUT, monitor_output_cb);
     protocol_add_command(MONITOR_OUTPUT_OFF, monitor_output_off_cb);
     protocol_add_command(MONITOR_AUDIO_LEVELS, monitor_audio_levels_cb);

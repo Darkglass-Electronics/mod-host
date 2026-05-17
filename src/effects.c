@@ -151,7 +151,6 @@ typedef struct {
 
 /* Local */
 #include "effects.h"
-#include "monitor.h"
 #include "socket.h"
 #include "uridmap.h"
 #include "lv2_evbuf.h"
@@ -350,13 +349,6 @@ typedef struct PRESET_T {
     LilvNode *uri;
 } preset_t;
 
-typedef struct MONITOR_T {
-    int port_id;
-    int op;
-    float value;
-    float last_notified_value;
-} monitor_t;
-
 typedef struct EFFECT_T {
     int instance;
     jack_client_t *jack_client;
@@ -409,9 +401,6 @@ typedef struct EFFECT_T {
 
     preset_t **presets;
     uint32_t presets_count;
-
-    monitor_t **monitors;
-    uint32_t monitors_count;
 
     worker_t worker;
     const MOD_License_Interface *license_iface;
@@ -2246,17 +2235,6 @@ static int ProcessPlugin(jack_nframes_t nframes, void *arg)
         {
             buffer_out = jack_port_get_buffer(effect->output_cv_ports[i]->jack_port, nframes);
             memcpy(buffer_out, effect->output_cv_ports[i]->buffer, (sizeof(float) * nframes));
-        }
-
-        for (i = 0; i < effect->monitors_count; i++)
-        {
-            int port_id = effect->monitors[i]->port_id;
-            value = *(effect->ports[port_id]->buffer);
-            if (monitor_check_condition(effect->monitors[i]->op, effect->monitors[i]->value, value) &&
-                floats_differ_enough(value, effect->monitors[i]->last_notified_value)) {
-                if (monitor_send(effect->instance, effect->ports[port_id]->symbol, value) >= 0)
-                    effect->monitors[i]->last_notified_value = value;
-            }
         }
     }
 
@@ -4615,8 +4593,6 @@ int effects_add(const char *uri, int instance, int activate)
     output_event_ports_count = 0;
     effect->presets_count = 0;
     effect->presets = NULL;
-    effect->monitors_count = 0;
-    effect->monitors = NULL;
     effect->ports_count = ports_count;
     effect->ports = (port_t **) calloc(ports_count, sizeof(port_t *));
 
@@ -6846,50 +6822,6 @@ int effects_get_property(int effect_id, const char *uri)
     }
 
     return ERR_INSTANCE_NON_EXISTS;
-}
-
-int effects_monitor_parameter(int effect_id, const char *control_symbol, const char *op, float value)
-{
-    float v;
-    int ret = effects_get_parameter(effect_id, control_symbol, &v);
-
-    if (ret != SUCCESS)
-        return ret;
-
-    int iop;
-    if (strcmp(op, ">") == 0)
-        iop = 0;
-    else if (strcmp(op, ">=") == 0)
-        iop = 1;
-    else if (strcmp(op, "<") == 0)
-        iop = 2;
-    else if (strcmp(op, "<=") == 0)
-        iop = 3;
-    else if (strcmp(op, "==") == 0)
-        iop = 4;
-    else if (strcmp(op, "!=") == 0)
-        iop = 5;
-    else
-        return ERR_ASSIGNMENT_INVALID_OP;
-
-
-    effect_t *effect = &g_effects[effect_id];
-    const LilvNode *symbol = lilv_new_string(g_lv2_data, control_symbol);
-    const LilvPort *port = lilv_plugin_get_port_by_symbol(effect->lilv_plugin, symbol);
-
-    int port_id = lilv_port_get_index(effect->lilv_plugin, port);
-
-    effect->monitors_count++;
-    effect->monitors =
-        (monitor_t**)realloc(effect->monitors, sizeof(monitor_t *) * effect->monitors_count);
-
-    int idx = effect->monitors_count - 1;
-    effect->monitors[idx] = (monitor_t*)malloc(sizeof(monitor_t));
-    effect->monitors[idx]->port_id = port_id;
-    effect->monitors[idx]->op = iop;
-    effect->monitors[idx]->value = value;
-    effect->monitors[idx]->last_notified_value = 0.0;
-    return SUCCESS;
 }
 
 int effects_monitor_output_parameter(int effect_id, const char *control_symbol_or_uri, int enable)
