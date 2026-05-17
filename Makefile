@@ -94,12 +94,6 @@ LIBS += -lNE10
 INCS += -DHAVE_NE10
 endif
 
-# control chain support
-ifeq ($(shell pkg-config --atleast-version=0.7.0 cc_client && echo true), true)
-LIBS += $(shell pkg-config --libs cc_client)
-INCS += $(shell pkg-config --cflags cc_client) -DHAVE_CONTROLCHAIN
-endif
-
 # hylia/link support
 ifeq ($(shell pkg-config --exists hylia && echo true), true)
 LIBS += $(shell pkg-config --libs hylia)

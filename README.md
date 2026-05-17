@@ -243,26 +243,6 @@ The commands supported by mod-host are:
         * listen to MIDI program change messages (on the feedback port)
         e.g.: monitor_midi_program 0 1
 
-    cc_map <instance_number> <param_symbol> <device_id> <actuator_id> <label> <value> <minimum> <maximum> <steps> <extraflags> <unit> <scalepoints_count> <scalepoints...>
-        * map a Control Chain actuator to a control port
-        e.g.: cc_map 0 "gain" 0 1 "Gain" 0.0 -24.0 3.0 33 0 "dB" 0
-
-    cc_unmap <instance_number> <param_symbol>
-        * unmap the Control Chain actuator from a control port
-        e.g.: cc_unmap 0 "gain"
-
-    cc_value_set <instance_number> <param_symbol> <value>
-        * set the value of a  mapped Control Chain actuator
-        e.g.: cc_value_set 0 "gain" 2.5
-
-    cv_map <instance_number> <param_symbol> <source_port_name> <minimum> <maximum> <operational-mode>
-        * map a CV source port to a control port, operational-mode being one of '-', '+', 'b' or '='
-        e.g.: cv_map 0 "gain" "AMS CV Source:CV Out 1" -24.0 3.0 =
-
-    cv_unmap <instance_number> <param_symbol>
-        * unmap the CV source port actuator from a control port
-        e.g.: cv_unmap 0 "gain"
-
     cpu_load
         * return current average jack cpu load
 
