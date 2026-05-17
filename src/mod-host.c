@@ -464,93 +464,6 @@ static void midi_unmap_cb(proto_t *proto)
     protocol_response_int(resp, proto);
 }
 
-static void cc_map_cb(proto_t *proto)
-{
-    int resp;
-    int scalepoints_count = atoi(proto->list[12]);
-    scalepoint_t *scalepoints;
-
-    if (scalepoints_count != 0 && (scalepoints_count == 1 || proto->list_count < (uint32_t)(13+2*scalepoints_count)))
-    {
-        protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
-        return;
-    }
-
-    if (scalepoints_count >= 2)
-    {
-        scalepoints = malloc(sizeof(scalepoint_t)*scalepoints_count);
-
-        if (scalepoints != NULL)
-        {
-            for (int i = 0; i < scalepoints_count; i++)
-            {
-                scalepoints[i].label = proto->list[13+i*2];
-                scalepoints[i].value = atof(proto->list[13+i*2+1]);
-            }
-        }
-        else
-        {
-            protocol_response_int(ERR_MEMORY_ALLOCATION, proto);
-            return;
-        }
-    }
-    else
-    {
-        scalepoints_count = 0;
-        scalepoints = NULL;
-    }
-
-    resp = effects_cc_map(atoi(proto->list[1]),  // effect_id
-                               proto->list[2],   // control_symbol
-                          atoi(proto->list[3]),  // device_id
-                          atoi(proto->list[4]),  // actuator_id
-                               proto->list[5],   // label
-                          atof(proto->list[6]),  // value
-                          atof(proto->list[7]),  // minimum
-                          atof(proto->list[8]),  // maximum
-                          atoi(proto->list[9]),  // steps
-                          atoi(proto->list[10]), // extraflags
-                               proto->list[11],  // unit
-                          scalepoints_count, scalepoints);
-
-    free(scalepoints);
-
-    protocol_response_int(resp, proto);
-}
-
-static void cc_value_set_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cc_value_set(atoi(proto->list[1]), proto->list[2], atof(proto->list[3]));
-    protocol_response_int(resp, proto);
-}
-
-static void cc_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cc_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
-static void cv_map_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cv_map(atoi(proto->list[1]), // effect_id
-                               proto->list[2],  // control_symbol
-                               proto->list[3],  // origin_port_name
-                          atof(proto->list[4]), // minimum
-                          atof(proto->list[5]), // maximum
-                               proto->list[6]); // op_mode
-    protocol_response_int(resp, proto);
-}
-
-static void cv_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cv_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
 static void cpu_load_cb(proto_t *proto)
 {
     float value = effects_jack_cpu_load();
@@ -1134,11 +1047,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(MIDI_LEARN, midi_learn_cb);
     protocol_add_command(MIDI_MAP, midi_map_cb);
     protocol_add_command(MIDI_UNMAP, midi_unmap_cb);
-    protocol_add_command(CC_MAP, cc_map_cb);
-    protocol_add_command(CC_VALUE_SET, cc_value_set_cb);
-    protocol_add_command(CC_UNMAP, cc_unmap_cb);
-    protocol_add_command(CV_MAP, cv_map_cb);
-    protocol_add_command(CV_UNMAP, cv_unmap_cb);
     protocol_add_command(CPU_LOAD, cpu_load_cb);
     protocol_add_command(MAX_CPU_LOAD, max_cpu_load_cb);
 #ifndef SKIP_READLINE

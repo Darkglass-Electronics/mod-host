@@ -90,7 +90,6 @@ typedef unsigned int uint;
 #include "lv2/control-input-port-change-request.h"
 #include "lv2/control-port-state-update.h"
 #include "lv2/kxstudio-properties.h"
-#include "lv2/lv2-hmi.h"
 #include "lv2/mod-license.h"
 
 // do not enable external-ui support in embed targets
@@ -104,17 +103,10 @@ typedef unsigned int uint;
 #include <lv2/ui/ui.h>
 #endif
 
-#ifdef HAVE_CONTROLCHAIN
-/* Control Chain */
-#include <cc_client.h>
-#endif
-
 #ifdef HAVE_HYLIA
 /* Hylia / Link */
 #include <hylia.h>
 #endif
-
-#include "mod-host.h"
 
 #ifndef HAVE_NEW_LILV
 #define lilv_free(x) free(x)
@@ -722,12 +714,6 @@ typedef struct CACHED_EFFECT_FLUSH_T {
 static effect_t g_effects[MAX_INSTANCES];
 static midi_cc_t g_midi_cc_list[MAX_MIDI_CC_ASSIGN], *g_midi_learning;
 
-#ifdef HAVE_CONTROLCHAIN
-/* Control Chain */
-static cc_client_t *g_cc_client = NULL;
-static assignment_t g_assignments_list[CC_MAX_DEVICES][CC_MAX_ASSIGNMENTS];
-#endif
-
 static struct list_head g_rtsafe_list;
 static RtMemPool_Handle g_rtsafe_mem_pool;
 static pthread_mutex_t  g_rtsafe_mutex;
@@ -885,11 +871,6 @@ static LV2_Control_Port_State_Update_Status UpdateControlPortState(LV2_Control_P
                                                                    LV2_Control_Port_State state);
 static char* MakePluginStatePathFromSratchDir(LV2_State_Make_Path_Handle handle, const char *path);
 static char* MakePluginStatePathDuringLoadSave(LV2_State_Make_Path_Handle handle, const char *path);
-#ifdef HAVE_CONTROLCHAIN
-static void CCDataUpdate(void* arg);
-static void InitializeControlChainIfNeeded(void);
-static bool CheckCCDeviceProtocolVersion(int device_id, int major, int minor);
-#endif
 #ifdef HAVE_HYLIA
 static uint32_t GetHyliaOutputLatency(void);
 #endif
@@ -3821,129 +3802,6 @@ static char* MakePluginStatePathDuringLoadSave(LV2_State_Make_Path_Handle handle
     return MakePluginStatePath(effect->instance, effect->state_dir, path);
 }
 
-#ifdef HAVE_CONTROLCHAIN
-static void CCDataUpdate(void* arg)
-{
-    cc_update_list_t *updates = arg;
-
-    bool is_bypass, needs_post = false;
-    const int device_id = updates->device_id;
-
-    for (int i = 0; i < updates->count; i++)
-    {
-        cc_update_data_t *data = &updates->list[i];
-        assignment_t *assignment =
-            &g_assignments_list[device_id][data->assignment_id];
-
-        if (!assignment->port)
-            continue;
-
-        if (g_verbose_debug) {
-            printf("DEBUG: CCDataUpdate received %f as value of portsymbol %s (with prev value as %f)\n",
-                   data->value, assignment->port->symbol, assignment->port->prev_value);
-            fflush(stdout);
-        }
-
-        // invert value if bypass
-        if ((is_bypass = !strcmp(assignment->port->symbol, g_bypass_port_symbol)))
-            data->value = 1.0f - data->value;
-
-        // ignore requests for same value
-        if (!floats_differ_enough(assignment->port->prev_value, data->value))
-        {
-            if (g_verbose_debug) {
-                puts("DEBUG: CCDataUpdate ignoring value change (matches previous value)");
-                fflush(stdout);
-            }
-            continue;
-        }
-
-        if (SetPortValue(assignment->port, data->value, assignment->effect_id, is_bypass, false))
-            needs_post = true;
-    }
-
-    if (needs_post)
-        sem_post(&g_postevents_semaphore);
-}
-
-static void InitializeControlChainIfNeeded(void)
-{
-    if (g_cc_client != NULL)
-        return;
-
-    if ((g_cc_client = cc_client_new("/tmp/control-chain.sock")) != NULL)
-        cc_client_data_update_cb(g_cc_client, CCDataUpdate);
-}
-
-static bool CheckCCDeviceProtocolVersion(int device_id, int major, int minor)
-{
-    char *descriptor = cc_client_device_descriptor(g_cc_client, device_id);
-
-    if (!descriptor)
-    {
-        printf("CheckCCDeviceProtocolVersion error: failed to get device descriptor with id %i\n", device_id);
-        return false;
-    }
-
-    // we quickly parse the json ourselves in order to prevent adding more dependencies into mod-host
-    const char *vsplit, *vstart, *vend;
-
-    vsplit = strstr(descriptor, "\"protocol\":");
-    if (!vsplit)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field");
-        goto free;
-    }
-
-    vstart = strstr(vsplit+10, "\"");
-    if (!vstart)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field start");
-        goto free;
-    }
-    ++vstart;
-
-    vend = strstr(vstart, "\"");
-    if (!vend)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field end");
-        goto free;
-    }
-
-    char buf_major[8] = {0};
-    char buf_minor[8] = {0};
-    char *buf = buf_major;
-
-    for (int i=0; i<7; ++vstart)
-    {
-        if (*vstart >= '0' && *vstart <= '9')
-        {
-            buf[i++] = *vstart;
-            continue;
-        }
-
-        if (*vstart == '.' && buf == buf_major)
-        {
-            i = 0;
-            buf = buf_minor;
-            continue;
-        }
-
-        break;
-    }
-
-    const int device_major = atoi(buf_major);
-    const int device_minor = atoi(buf_minor);
-
-    free(descriptor);
-    return device_major >= major && device_minor >= minor;
-
-free:
-    free(descriptor);
-    return false;
-}
-#endif
-
 #ifdef HAVE_HYLIA
 static uint32_t GetHyliaOutputLatency(void)
 {
@@ -4424,20 +4282,6 @@ int effects_init(void* client)
     memset(g_monitored_midi_controls, 0, sizeof(g_monitored_midi_controls));
     memset(g_monitored_midi_programs, 0, sizeof(g_monitored_midi_programs));
 
-#ifdef HAVE_CONTROLCHAIN
-    /* Init the control chain variables */
-    memset(&g_assignments_list, 0, sizeof(g_assignments_list));
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            g_assignments_list[i][j].effect_id = ASSIGNMENT_NULL;
-            g_assignments_list[i][j].assignment_pair_id = -1;
-        }
-    }
-#endif
-
     /* Start the thread that consumes from the event queue */
     g_postevents_running = 1;
     g_postevents_ready = true;
@@ -4488,14 +4332,6 @@ int effects_finish(int close_client)
         monitor_client_stop();
 
     effects_remove(REMOVE_ALL);
-
-#ifdef HAVE_CONTROLCHAIN
-    if (g_cc_client)
-    {
-        cc_client_delete(g_cc_client);
-        g_cc_client = NULL;
-    }
-#endif
 
     if (g_capture_ports) jack_free(g_capture_ports);
     if (g_playback_ports) jack_free(g_playback_ports);
@@ -5683,41 +5519,6 @@ static void effects_remove_inner_pre(int effect_id)
             g_midi_cc_list[j].port = NULL;
         }
 
-#ifdef HAVE_CONTROLCHAIN
-        if (g_cc_client)
-        {
-            for (int i = 0; i < CC_MAX_DEVICES; i++)
-            {
-                for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-                {
-                    assignment_t *assignment = &g_assignments_list[i][j];
-
-                    if (assignment->effect_id == ASSIGNMENT_NULL)
-                        break;
-                    if (assignment->effect_id == ASSIGNMENT_UNUSED)
-                        continue;
-
-                    cc_assignment_key_t key = {0};
-                    key.id = assignment->assignment_id;
-                    key.device_id = assignment->device_id;
-                    key.pair_id = assignment->assignment_pair_id;
-                    cc_client_unassignment(g_cc_client, &key);
-                }
-            }
-        }
-
-        memset(&g_assignments_list, 0, sizeof(g_assignments_list));
-
-        for (int i = 0; i < CC_MAX_DEVICES; i++)
-        {
-            for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-            {
-                g_assignments_list[i][j].effect_id = ASSIGNMENT_NULL;
-                g_assignments_list[i][j].assignment_pair_id = -1;
-            }
-        }
-#endif
-
         // this resets volume back 0dB if needed
         // monitor_client_setup_volume(0.0f);
 
@@ -5792,36 +5593,6 @@ static void effects_remove_inner_pre(int effect_id)
             g_midi_cc_list[j].symbol = NULL;
             g_midi_cc_list[j].port = NULL;
         }
-
-#ifdef HAVE_CONTROLCHAIN
-        for (int i = 0; i < CC_MAX_DEVICES; i++)
-        {
-            for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-            {
-                assignment_t *assignment = &g_assignments_list[i][j];
-
-                if (assignment->effect_id == ASSIGNMENT_NULL)
-                    break;
-                if (assignment->effect_id == ASSIGNMENT_UNUSED)
-                    continue;
-                if (assignment->effect_id != effect_id)
-                    continue;
-
-                if (g_cc_client)
-                {
-                    cc_assignment_key_t key = {0};
-                    key.id = assignment->assignment_id;
-                    key.device_id = assignment->device_id;
-                    key.pair_id = assignment->assignment_pair_id;
-                    cc_client_unassignment(g_cc_client, &key);
-                }
-
-                memset(assignment, 0, sizeof(assignment_t));
-                assignment->effect_id = ASSIGNMENT_UNUSED;
-                assignment->assignment_pair_id = -1;
-            }
-        }
-#endif
     }
 }
 
@@ -7613,316 +7384,6 @@ int effects_set_beats_per_bar(float bpb)
     result = ERR_JACK_VALUE_OUT_OF_RANGE;
   }
   return result;
-}
-
-int effects_cc_map(int effect_id, const char *control_symbol, int device_id, int actuator_id,
-                   const char *label, float value, float minimum, float maximum, int steps, int extraflags,
-                   const char *unit, int scalepoints_count, const scalepoint_t *scalepoints)
-{
-#ifdef HAVE_CONTROLCHAIN
-    InitializeControlChainIfNeeded();
-
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-    if (scalepoints_count == 1 || extraflags < 0)
-        return ERR_ASSIGNMENT_INVALID_OP;
-
-    effect_t *effect = &(g_effects[effect_id]);
-    port_t *port = FindEffectInputPortBySymbol(effect, control_symbol);
-
-    if (port == NULL)
-        return ERR_LV2_INVALID_PARAM_SYMBOL;
-
-    cc_assignment_t assignment = {0};
-    assignment.device_id = device_id;
-    assignment.actuator_id = actuator_id;
-    assignment.label = label;
-    assignment.value = value;
-    assignment.min   = minimum;
-    assignment.max   = maximum;
-    assignment.def   = port->def_value;
-    assignment.steps = steps;
-    assignment.unit  = unit;
-    assignment.list_count = scalepoints_count;
-    assignment.actuator_pair_id = -1;
-    assignment.assignment_pair_id = -1;
-
-    if (extraflags & CC_MODE_TAP_TEMPO)
-        assignment.mode = CC_MODE_TAP_TEMPO;
-    else if (port->hints & HINT_TOGGLE)
-        assignment.mode = CC_MODE_TOGGLE;
-    else if (port->hints & HINT_INTEGER)
-        assignment.mode = CC_MODE_INTEGER;
-    else
-        assignment.mode = CC_MODE_REAL;
-
-    if (port->hints & HINT_LOGARITHMIC)
-        assignment.mode |= CC_MODE_LOGARITHMIC;
-    if (port->hints & HINT_TRIGGER)
-        assignment.mode |= CC_MODE_TRIGGER;
-
-    if (extraflags & CC_MODE_COLOURED)
-        assignment.mode = CC_MODE_COLOURED;
-    if (extraflags & CC_MODE_MOMENTARY)
-        assignment.mode = CC_MODE_MOMENTARY;
-
-    cc_item_t *item_data;
-
-    if (scalepoints_count >= 2)
-    {
-        item_data = malloc(sizeof(cc_item_t)*scalepoints_count);
-        assignment.list_items = malloc(sizeof(cc_item_t*)*scalepoints_count);
-
-        if (assignment.list_items != NULL && item_data != NULL)
-        {
-            assignment.mode |= CC_MODE_OPTIONS;
-
-            for (int i = 0; i < scalepoints_count; i++)
-            {
-                item_data[i].label = scalepoints[i].label;
-                item_data[i].value = scalepoints[i].value;
-                assignment.list_items[i] = item_data + i;
-            }
-        }
-        else
-        {
-            free(item_data);
-            free(assignment.list_items);
-            return ERR_MEMORY_ALLOCATION;
-        }
-    }
-    else
-    {
-        item_data = NULL;
-        assignment.list_items = NULL;
-    }
-
-    if (!strcmp(control_symbol, g_bypass_port_symbol))
-    {
-        // invert value for bypass
-        assignment.value = value > 0.5f ? 0.0f : 1.0f;
-        assignment.def = 1.0f;
-    }
-    else if (!strcmp(control_symbol, g_presets_port_symbol))
-    {
-        // virtual presets port
-        port->min_value = minimum;
-        port->max_value = maximum;
-        port->def_value = port->prev_value = *(port->buffer) = value;
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_map sending:");
-        printf("\tdevice_id:   %i\n", assignment.device_id);
-        printf("\tactuator_id: %i\n", assignment.actuator_id);
-        printf("\tmode:        %x\n", assignment.mode);
-        printf("\tlabel:       \"%s\"\n", assignment.label);
-        printf("\tmin:         %f\n", assignment.min);
-        printf("\tmax:         %f\n", assignment.max);
-        printf("\tdef:         %f\n", assignment.def);
-        printf("\tvalue:       %f\n", assignment.value);
-        printf("\tsteps:       %i\n", assignment.steps);
-        printf("\tunit:        \"%s\"\n", assignment.unit);
-        printf("\tlist_count:  %i\n", assignment.list_count);
-        for (int i = 0; i < scalepoints_count; i++)
-            printf("\t #%02i: %f \"%s\"\n", i+1, scalepoints[i].value, scalepoints[i].label);
-        fflush(stdout);
-    }
-
-    const int assignment_id = cc_client_assignment(g_cc_client, &assignment);
-
-    free(item_data);
-    free(assignment.list_items);
-
-    if (assignment_id < 0)
-    {
-        if (g_verbose_debug) {
-            puts("DEBUG: cc_map failed");
-            fflush(stdout);
-        }
-        return ERR_ASSIGNMENT_FAILED;
-    }
-
-    assignment_t *item = &g_assignments_list[assignment.device_id][assignment_id];
-
-    item->effect_id = effect_id;
-    item->port = port;
-    item->device_id = device_id;
-    item->actuator_id = actuator_id;
-    item->assignment_id = assignment_id;
-    item->actuator_pair_id = assignment.actuator_pair_id;
-    item->assignment_pair_id = assignment.assignment_pair_id;
-    item->supports_set_value = CheckCCDeviceProtocolVersion(device_id, 0, 6);
-
-    if (assignment.assignment_pair_id != -1)
-    {
-        assignment_t *item2 = &g_assignments_list[assignment.device_id][assignment.assignment_pair_id];
-
-        item2->effect_id = effect_id;
-        item2->port = port;
-        item2->device_id = device_id;
-        item2->actuator_id = assignment.actuator_pair_id;
-        item2->assignment_id = assignment.assignment_pair_id;
-        item2->actuator_pair_id = actuator_id;
-        item2->assignment_pair_id = assignment_id;
-        item2->supports_set_value = item->supports_set_value;
-    }
-
-    if (g_verbose_debug) {
-        printf("DEBUG: cc_map assignment supports set_value: %s, has pair %i\n",
-               item->supports_set_value ? "true" : "false", assignment.assignment_pair_id);
-        fflush(stdout);
-    }
-
-    return SUCCESS;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-    UNUSED_PARAM(device_id);
-    UNUSED_PARAM(actuator_id);
-    UNUSED_PARAM(label);
-    UNUSED_PARAM(value);
-    UNUSED_PARAM(minimum);
-    UNUSED_PARAM(maximum);
-    UNUSED_PARAM(steps);
-    UNUSED_PARAM(extraflags);
-    UNUSED_PARAM(unit);
-    UNUSED_PARAM(scalepoints_count);
-    UNUSED_PARAM(scalepoints);
-#endif
-}
-
-int effects_cc_value_set(int effect_id, const char *control_symbol, float value)
-{
-#ifdef HAVE_CONTROLCHAIN
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            assignment_t *assignment = &g_assignments_list[i][j];
-
-            if (assignment->effect_id == ASSIGNMENT_NULL)
-                break;
-
-            if (assignment->effect_id == effect_id && assignment->port != NULL &&
-                strcmp(assignment->port->symbol, control_symbol) == 0)
-            {
-                if (! assignment->supports_set_value)
-                    return ERR_INVALID_OPERATION;
-
-                // invert value for bypass
-                if (!strcmp(control_symbol, BYPASS_PORT_SYMBOL))
-                    value = value > 0.5f ? 0.0f : 1.0f;
-
-                if (g_verbose_debug) {
-                    puts("DEBUG: cc_value_set sending:");
-                    printf("\tdevice_id:         %i\n", assignment->device_id);
-                    printf("\tassignment_id:     %i\n", assignment->assignment_id);
-                    printf("\assignment_pair_id: %i\n", assignment->assignment_pair_id);
-                    printf("\tactuator_id:       %i\n", assignment->actuator_id);
-                    printf("\tvalue:             %f\n", value);
-                    fflush(stdout);
-                }
-
-                cc_set_value_t update = {0};
-                update.device_id = assignment->device_id;
-                update.assignment_id = assignment->assignment_id;
-                update.actuator_id = assignment->actuator_id;
-                update.value = value;
-
-                cc_client_value_set(g_cc_client, &update);
-                return SUCCESS;
-            }
-        }
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_value_set failed");
-        fflush(stdout);
-    }
-
-    return ERR_ASSIGNMENT_INVALID_OP;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-    UNUSED_PARAM(value);
-#endif
-}
-
-int effects_cc_unmap(int effect_id, const char *control_symbol)
-{
-#ifdef HAVE_CONTROLCHAIN
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            assignment_t *assignment = &g_assignments_list[i][j];
-
-            if (assignment->effect_id == ASSIGNMENT_NULL)
-                break;
-
-            if (assignment->effect_id == effect_id && assignment->port != NULL &&
-                strcmp(assignment->port->symbol, control_symbol) == 0)
-            {
-                cc_assignment_key_t key = {0};
-                key.id = assignment->assignment_id;
-                key.device_id = assignment->device_id;
-                key.pair_id = assignment->assignment_pair_id;
-
-                memset(assignment, 0, sizeof(assignment_t));
-                assignment->effect_id = ASSIGNMENT_UNUSED;
-                assignment->assignment_pair_id = -1;
-
-                if (key.pair_id != -1)
-                {
-                    assignment = &g_assignments_list[i][key.pair_id];
-                    memset(assignment, 0, sizeof(assignment_t));
-                    assignment->effect_id = ASSIGNMENT_UNUSED;
-                    assignment->assignment_pair_id = -1;
-                }
-
-                if (g_verbose_debug) {
-                    puts("DEBUG: cc_unmap sending:");
-                    printf("\tdevice_id: %i\n", key.device_id);
-                    printf("\tid:        %i\n", key.id);
-                    printf("\tpair_id:   %i\n", key.pair_id);
-                    fflush(stdout);
-                }
-
-                cc_client_unassignment(g_cc_client, &key);
-                return SUCCESS;
-            }
-        }
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_unmap failed");
-        fflush(stdout);
-    }
-
-    return ERR_ASSIGNMENT_INVALID_OP;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-#endif
 }
 
 int effects_cv_map(int effect_id, const char *control_symbol, const char *source_port_name, float minimum, float maximum, const char* mode)
