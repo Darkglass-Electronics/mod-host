@@ -62,10 +62,6 @@
 
 #if defined(_MOD_DEVICE_RK358x)
 #include <sys/resource.h>
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-#include <sys/resource.h>
-#include <syscall.h>
-#include <unistd.h>
 #endif
 
 #include "mod-host.h"
@@ -552,30 +548,6 @@ static void cv_unmap_cb(proto_t *proto)
 {
     int resp;
     resp = effects_cv_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
-static void hmi_map_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_hmi_map(atoi(proto->list[ 1]),  // effect_id
-                                proto->list[ 2],   // control_symbol
-                           atoi(proto->list[ 3]),  // hw_id
-                           atoi(proto->list[ 4]),  // page
-                           atoi(proto->list[ 5]),  // subpage
-                           atoi(proto->list[ 6]),  // caps
-                           atof(proto->list[ 7]),  // flags
-                                proto->list[ 8],   // label
-                           atof(proto->list[ 9]),  // min
-                           atof(proto->list[10]),  // max
-                           atoi(proto->list[11])); // steps
-    protocol_response_int(resp, proto);
-}
-
-static void hmi_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_hmi_unmap(atoi(proto->list[1]), proto->list[2]);
     protocol_response_int(resp, proto);
 }
 
@@ -1167,8 +1139,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(CC_UNMAP, cc_unmap_cb);
     protocol_add_command(CV_MAP, cv_map_cb);
     protocol_add_command(CV_UNMAP, cv_unmap_cb);
-    protocol_add_command(HMI_MAP, hmi_map_cb);
-    protocol_add_command(HMI_UNMAP, hmi_unmap_cb);
     protocol_add_command(CPU_LOAD, cpu_load_cb);
     protocol_add_command(MAX_CPU_LOAD, max_cpu_load_cb);
 #ifndef SKIP_READLINE
@@ -1219,10 +1189,6 @@ static void* intclient_socket_run(void* ptr)
 {
 #if defined(_MOD_DEVICE_RK358x)
     setpriority(PRIO_PROCESS, gettid(), -19);
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-    const pid_t tid = syscall(SYS_gettid);
-    if (tid > 0)
-        setpriority(PRIO_PROCESS, tid, -19);
 #endif
 
     while (running)
