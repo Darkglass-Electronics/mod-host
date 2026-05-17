@@ -75,7 +75,6 @@
 #define EFFECT_LICENSEE         "licensee %i"
 #define EFFECT_SET_BPM          "set_bpm %f"
 #define EFFECT_SET_BPB          "set_bpb %f"
-#define MONITOR_ADDR_SET        "monitor %s %i %i"
 #define MONITOR_OUTPUT          "monitor_output %i %s"
 #define MONITOR_OUTPUT_OFF      "monitor_output_off %i %s"
 #define MONITOR_AUDIO_LEVELS    "monitor_audio_levels %i %s"
