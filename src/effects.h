@@ -95,7 +95,6 @@ typedef enum {
 #define MAX_INSTANCES           (MAX_PLUGIN_INSTANCES + MAX_TOOL_INSTANCES)
 #define MAX_MIDI_CC_ASSIGN      1024
 #define MAX_POSTPONED_EVENTS    8192
-#define MAX_HMI_ADDRESSINGS     128
 
 #define MAX_SYNC_SCHEDULED_PARAMS 512
 
@@ -186,10 +185,6 @@ int effects_cc_unmap(int effect_id, const char *control_symbol);
 
 int effects_cv_map(int effect_id, const char *control_symbol, const char *source_port_name, float minimum, float maximum, const char* mode);
 int effects_cv_unmap(int effect_id, const char *control_symbol);
-
-int effects_hmi_map(int effect_id, const char *control_symbol, int hw_id, int page, int subpage,
-                    int caps, int flags, const char *label, float minimum, float maximum, int steps);
-int effects_hmi_unmap(int effect_id, const char *control_symbol);
 
 float effects_jack_cpu_load(void);
 float effects_jack_max_cpu_load(void);

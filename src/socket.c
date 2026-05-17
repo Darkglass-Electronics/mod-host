@@ -40,7 +40,6 @@ typedef int SOCKET;
 
 #include "socket.h"
 #include "effects.h"
-#include "mod-memset.h"
 
 
 /*
@@ -343,7 +342,7 @@ void socket_run(int exit_on_failure)
 
     while (g_serverfd != INVALID_SOCKET)
     {
-        mod_memset(buffer, 0, g_buffer_size);
+        memset(buffer, 0, g_buffer_size);
         count = recv(clientfd, buffer, g_buffer_size, 0);
 
         if (count > 0) /* Data received */
@@ -371,7 +370,7 @@ void socket_run(int exit_on_failure)
                         msgbuffer = realloc(msgbuffer, new_buffer_size);
                     }
 
-                    mod_memset(msgbuffer + count, 0, g_buffer_size);
+                    memset(msgbuffer + count, 0, g_buffer_size);
                     new_count = recv(clientfd, msgbuffer + count, g_buffer_size, 0);
 
                     if (new_count > 0) /* Data received */
