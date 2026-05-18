@@ -1089,22 +1089,26 @@ static int InstanceExist(int effect_id)
 static void AllocatePortBuffers(effect_t* effect, int in_size, int out_size)
 {
     uint32_t i;
+    port_t *port;
 
     for (i = 0; i < effect->event_ports_count; i++)
     {
-        const int size = effect->event_ports[i]->flow == FLOW_INPUT ? in_size : out_size;
+        port = effect->event_ports[i];
+        const int size = port->flow == FLOW_INPUT ? in_size : out_size;
         if (size == 0)
             continue;
-        lv2_evbuf_free(effect->event_ports[i]->evbuf);
-        effect->event_ports[i]->evbuf = lv2_evbuf_new(
+        if (port->evbuf && lv2_evbuf_get_capacity(port->evbuf) == (uint32_t)size)
+            continue;
+        lv2_evbuf_free(port->evbuf);
+        port->evbuf = lv2_evbuf_new(
             size,
-            (effect->event_ports[i]->hints & HINT_OLD_EVENT_API) ? LV2_EVBUF_EVENT : LV2_EVBUF_ATOM,
+            (port->hints & HINT_OLD_EVENT_API) ? LV2_EVBUF_EVENT : LV2_EVBUF_ATOM,
             g_urid_map.map(g_urid_map.handle, LV2_ATOM__Chunk),
             g_urid_map.map(g_urid_map.handle, LV2_ATOM__Sequence));
 
         LV2_Atom_Sequence *buf;
-        buf = lv2_evbuf_get_buffer(effect->event_ports[i]->evbuf);
-        lilv_instance_connect_port(effect->lilv_instance, effect->event_ports[i]->index, buf);
+        buf = lv2_evbuf_get_buffer(port->evbuf);
+        lilv_instance_connect_port(effect->lilv_instance, port->index, buf);
     }
 }
 
@@ -5711,6 +5715,9 @@ int effects_add(const char *uri, int instance, int activate)
                     effect->hints |= HINT_TRANSPORT;
                 }
             }
+
+            if (port->flow == FLOW_INPUT && control_in_size == 0)
+                control_in_size = g_midi_buffer_size * 16; // 16 taken from jalv source code
 
             if (port->flow == FLOW_OUTPUT && control_out_size == 0)
                 control_out_size = g_midi_buffer_size * 16; // 16 taken from jalv source code

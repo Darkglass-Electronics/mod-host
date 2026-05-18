@@ -101,6 +101,12 @@ lv2_evbuf_reset(LV2_Evbuf* evbuf, bool input)
 }
 
 uint32_t
+lv2_evbuf_get_capacity(LV2_Evbuf* evbuf)
+{
+    return evbuf->capacity;
+}
+
+uint32_t
 lv2_evbuf_get_size(LV2_Evbuf* evbuf)
 {
     switch (evbuf->type) {

@@ -87,6 +87,12 @@ void
 lv2_evbuf_reset(LV2_Evbuf* evbuf, bool input);
 
 /**
+   Return the capacity/size of the buffer, as passed during lv2_evbuf_new.
+*/
+uint32_t
+lv2_evbuf_get_capacity(LV2_Evbuf* evbuf);
+
+/**
    Return the total padded size of the events stored in the buffer.
 */
 uint32_t
