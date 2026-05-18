@@ -247,13 +247,13 @@ char *str_duplicate(const char *str)
 }
 
 
-#if defined(__ARM_ARCH_8A) && !defined(_MOD_DEVICE_DUOX)
+#ifdef __ARM_ARCH_8A
 static uint64_t _cntfrq_ratio = 0;
 #endif
 
 void time_ns_init()
 {
-#if defined(__ARM_ARCH_8A) && !defined(_MOD_DEVICE_DUOX)
+#ifdef __ARM_ARCH_8A
     uint64_t r;
     asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(r));
     // 1e6 for MHz clock speed, then converted to nano-seconds ratio
@@ -264,7 +264,7 @@ void time_ns_init()
 
 uint64_t time_ns_get()
 {
-#if defined(__ARM_ARCH_8A) && !defined(_MOD_DEVICE_DUOX)
+#ifdef __ARM_ARCH_8A
     uint64_t r;
     asm volatile("mrs %0, CNTVCT_EL0" : "=r"(r));
     return r * _cntfrq_ratio;
