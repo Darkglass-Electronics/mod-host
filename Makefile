@@ -94,12 +94,6 @@ LIBS += -lNE10
 INCS += -DHAVE_NE10
 endif
 
-# control chain support
-ifeq ($(shell pkg-config --atleast-version=0.7.0 cc_client && echo true), true)
-LIBS += $(shell pkg-config --libs cc_client)
-INCS += $(shell pkg-config --cflags cc_client) -DHAVE_CONTROLCHAIN
-endif
-
 # hylia/link support
 ifeq ($(shell pkg-config --exists hylia && echo true), true)
 LIBS += $(shell pkg-config --libs hylia)
@@ -123,7 +117,6 @@ endif
 
 # source and object files
 SRC  = $(wildcard $(SRC_DIR)/*.$(EXT))
-SRC += $(SRC_DIR)/dsp/compressor_core.c
 SRC += $(SRC_DIR)/monitor/monitor-client.c
 SRC += $(SRC_DIR)/sha1/sha1.c
 SRC += $(SRC_DIR)/rtmempool/rtmempool.c
@@ -155,7 +148,7 @@ src/fake-input.o: src/fake-input/fake-input.c
 	$(CC) $(INCS) $(CFLAGS) -o $@ $<
 
 # custom rules for monitor client
-mod-monitor.so: src/mod-monitor.o src/dsp/compressor_core.o
+mod-monitor.so: src/mod-monitor.o
 	$(CC) $^ $(LDFLAGS) $(LIBS) -shared -o $@
 
 src/mod-monitor.o: src/monitor/monitor-client.c

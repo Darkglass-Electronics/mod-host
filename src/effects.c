@@ -57,10 +57,6 @@ typedef unsigned int uint;
 
 #if defined(_MOD_DEVICE_RK358x)
 #include <sys/resource.h>
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-#include <sys/resource.h>
-#include <syscall.h>
-#include <unistd.h>
 #endif
 
 /* Jack */
@@ -94,11 +90,10 @@ typedef unsigned int uint;
 #include "lv2/control-input-port-change-request.h"
 #include "lv2/control-port-state-update.h"
 #include "lv2/kxstudio-properties.h"
-#include "lv2/lv2-hmi.h"
 #include "lv2/mod-license.h"
 
 // do not enable external-ui support in embed targets
-#if !(defined(_MOD_DEVICE_RK358x) || defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF))
+#if !(defined(_MOD_DEVICE_RK358x))
 #define WITH_EXTERNAL_UI_SUPPORT
 #endif
 
@@ -108,17 +103,10 @@ typedef unsigned int uint;
 #include <lv2/ui/ui.h>
 #endif
 
-#ifdef HAVE_CONTROLCHAIN
-/* Control Chain */
-#include <cc_client.h>
-#endif
-
 #ifdef HAVE_HYLIA
 /* Hylia / Link */
 #include <hylia.h>
 #endif
-
-#include "mod-host.h"
 
 #ifndef HAVE_NEW_LILV
 #define lilv_free(x) free(x)
@@ -157,18 +145,12 @@ typedef struct {
 // needed because we prefer jack2 which doesn't have metadata yet
 #define JackPortIsControlVoltage 0x100
 
-#if defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-#define MOD_HMI_CONTROL_ENABLED
-#define MOD_IO_PROCESSING_ENABLED
-#endif
-
 #ifdef _DARKGLASS_DEVICE_PABLITO
 #define _DARKGLASS_PABLITO
 #endif
 
 /* Local */
 #include "effects.h"
-#include "monitor.h"
 #include "socket.h"
 #include "uridmap.h"
 #include "lv2_evbuf.h"
@@ -180,15 +162,6 @@ typedef struct {
 #include "rtmempool/list.h"
 #include "rtmempool/rtmempool.h"
 #include "filter.h"
-#include "mod-memset.h"
-
-#ifdef MOD_HMI_CONTROL_ENABLED
-#include "sys_host.h"
-#endif
-
-#ifdef __MOD_DEVICES__
-#include "dsp/gate_core.h"
-#endif
 
 /*
 ************************************************************************************************************************
@@ -277,9 +250,6 @@ enum {
     URID_MAP_FEATURE,
     URID_UNMAP_FEATURE,
     OPTIONS_FEATURE,
-#ifdef MOD_HMI_CONTROL_ENABLED
-    HMI_WC_FEATURE,
-#endif
     LICENSE_FEATURE,
     BUF_SIZE_POWER2_FEATURE,
     BUF_SIZE_FIXED_FEATURE,
@@ -326,9 +296,6 @@ enum UpdatePositionFlag {
 ************************************************************************************************************************
 */
 
-#ifdef MOD_HMI_CONTROL_ENABLED
-typedef struct HMI_ADDRESSING_T hmi_addressing_t;
-#endif
 typedef struct PORT_T port_t;
 
 typedef struct AUDIO_MONITOR_T {
@@ -366,9 +333,6 @@ typedef struct PORT_T {
     LilvScalePoints* scale_points;
     cv_source_t* cv_source;
     pthread_mutex_t cv_source_mutex;
-#ifdef MOD_HMI_CONTROL_ENABLED
-    hmi_addressing_t* hmi_addressing;
-#endif
 } port_t;
 
 typedef struct PROPERTY_T {
@@ -385,13 +349,6 @@ typedef struct PROPERTY_EVENT_T {
 typedef struct PRESET_T {
     LilvNode *uri;
 } preset_t;
-
-typedef struct MONITOR_T {
-    int port_id;
-    int op;
-    float value;
-    float last_notified_value;
-} monitor_t;
 
 typedef struct EFFECT_T {
     int instance;
@@ -446,16 +403,10 @@ typedef struct EFFECT_T {
     preset_t **presets;
     uint32_t presets_count;
 
-    monitor_t **monitors;
-    uint32_t monitors_count;
-
     worker_t worker;
     const MOD_License_Interface *license_iface;
     const LV2_Options_Interface *options_interface;
     const LV2_State_Interface *state_iface;
-#ifdef __MOD_DEVICES__
-    const LV2_HMI_PluginNotification *hmi_notif;
-#endif
 
     jack_ringbuffer_t *events_in_buffer;
     jack_ringbuffer_t *events_out_buffer;
@@ -512,7 +463,6 @@ typedef struct LILV_NODES_T {
     LilvNode *enumeration;
     LilvNode *event;
     LilvNode *freeWheeling;
-    LilvNode *hmi_interface;
     LilvNode *input;
     LilvNode *integer;
     LilvNode *is_live;
@@ -524,7 +474,6 @@ typedef struct LILV_NODES_T {
     LilvNode *minimumSize;
     LilvNode *mod_cvport;
     LilvNode *mod_default;
-    LilvNode *mod_default_custom;
     LilvNode *mod_maximum;
     LilvNode *mod_minimum;
     LilvNode *noPreRun;
@@ -614,14 +563,6 @@ typedef struct ASSIGNMENT_T {
     int assignment_pair_id;
     bool supports_set_value;
 } assignment_t;
-
-#ifdef MOD_HMI_CONTROL_ENABLED
-typedef struct HMI_ADDRESSING_T {
-    int actuator_id;
-    uint8_t page;
-    uint8_t subpage;
-} hmi_addressing_t;
-#endif
 
 typedef struct SYNC_SCHEDULED_PARAM_T {
     port_t *port;
@@ -773,12 +714,6 @@ typedef struct CACHED_EFFECT_FLUSH_T {
 static effect_t g_effects[MAX_INSTANCES];
 static midi_cc_t g_midi_cc_list[MAX_MIDI_CC_ASSIGN], *g_midi_learning;
 
-#ifdef HAVE_CONTROLCHAIN
-/* Control Chain */
-static cc_client_t *g_cc_client = NULL;
-static assignment_t g_assignments_list[CC_MAX_DEVICES][CC_MAX_ASSIGNMENTS];
-#endif
-
 static struct list_head g_rtsafe_list;
 static RtMemPool_Handle g_rtsafe_mem_pool;
 static pthread_mutex_t  g_rtsafe_mutex;
@@ -799,12 +734,6 @@ static float g_sample_rate_f;
 static const char **g_capture_ports, **g_playback_ports;
 static int32_t g_midi_buffer_size, g_block_length, g_block_time_us;
 static int32_t g_thread_policy, g_thread_priority;
-#ifdef MOD_IO_PROCESSING_ENABLED
-static jack_port_t *g_audio_in1_port;
-static jack_port_t *g_audio_in2_port;
-static jack_port_t *g_audio_out1_port;
-static jack_port_t *g_audio_out2_port;
-#endif
 static audio_monitor_t *g_audio_monitors;
 static pthread_mutex_t g_audio_monitor_mutex;
 static int g_audio_monitor_count;
@@ -837,9 +766,6 @@ static char *g_lv2_scratch_dir;
 static Symap* g_symap;
 static lilv_nodes_t g_lilv_nodes;
 static urids_t g_urids;
-#ifdef MOD_HMI_CONTROL_ENABLED
-static LV2_HMI_WidgetControl g_hmi_wc;
-#endif
 static MOD_License_Feature g_license;
 static LV2_Atom_Forge g_lv2_atom_forge;
 static LV2_Log_Log g_lv2_log;
@@ -867,9 +793,6 @@ static LV2_Feature g_buf_size_features[3] = {
     { LV2_BUF_SIZE__fixedBlockLength, NULL },
     { LV2_BUF_SIZE__boundedBlockLength, NULL }
 };
-#ifdef MOD_HMI_CONTROL_ENABLED
-static LV2_Feature g_hmi_wc_feature = { LV2_HMI__WidgetControl, &g_hmi_wc };
-#endif
 static LV2_Feature g_license_feature = { MOD_LICENSE__feature, &g_license };
 static LV2_Feature g_lv2_log_feature = { LV2_LOG__log, &g_lv2_log };
 static LV2_Feature g_options_feature = { LV2_OPTIONS__options, &g_options };
@@ -895,27 +818,6 @@ static hylia_t* g_hylia_instance;
 static hylia_time_info_t g_hylia_timeinfo;
 #endif
 
-#ifdef MOD_HMI_CONTROL_ENABLED
-/* HMI integration */
-static int g_hmi_shmfd;
-static sys_serial_shm_data* g_hmi_data;
-static ZixThread g_hmi_client_thread;
-static pthread_mutex_t g_hmi_mutex;
-static hmi_addressing_t g_hmi_addressings[MAX_HMI_ADDRESSINGS];
-#endif
-
-/* internal processing */
-#ifdef MOD_HMI_CONTROL_ENABLED
-static int g_compressor_mode = 0;
-static int g_compressor_release = 100;
-#endif
-#ifdef MOD_IO_PROCESSING_ENABLED
-static int g_noisegate_channel = 0;
-static int g_noisegate_decay = 10;
-static int g_noisegate_threshold = -60;
-static gate_t g_noisegate;
-#endif
-
 static const char* const g_bypass_port_symbol = BYPASS_PORT_SYMBOL;
 static const char* const g_presets_port_symbol = PRESETS_PORT_SYMBOL;
 static const char* const g_bpb_port_symbol = BPB_PORT_SYMBOL;
@@ -937,9 +839,6 @@ static void PortRegistration(jack_port_id_t port_id, int reg, void* data);
 static int XRun(void* data);
 static void RunPostPonedEvents(int ignored_effect_id);
 static void* PostPonedEventsThread(void* arg);
-#ifdef MOD_HMI_CONTROL_ENABLED
-static void* HMIClientThread(void* arg);
-#endif
 static void PreRunPlugin(effect_t *effect);
 static int ProcessPlugin(jack_nframes_t nframes, void *arg);
 static bool SetPortValue(port_t *port, float value, int effect_id, bool is_bypass, bool from_ui);
@@ -961,34 +860,6 @@ static void FreeFeatures(effect_t *effect);
 static void FreePluginString(void* handle, char *str);
 static void ConnectToAllHardwareMIDIPorts(void);
 static void ConnectToMIDIThroughPorts(void);
-#ifdef MOD_HMI_CONTROL_ENABLED
-static void HMIWidgetsSetLedWithBlink(LV2_HMI_WidgetControl_Handle handle,
-                                      LV2_HMI_Addressing addressing,
-                                      LV2_HMI_LED_Colour led_color,
-                                      int on_blink_time,
-                                      int off_blink_time);
-static void HMIWidgetsSetLedWithBrightness(LV2_HMI_WidgetControl_Handle handle,
-                                           LV2_HMI_Addressing addressing,
-                                           LV2_HMI_LED_Colour led_color,
-                                           int brightness);
-static void HMIWidgetsSetLabel(LV2_HMI_WidgetControl_Handle handle,
-                               LV2_HMI_Addressing addressing,
-                               const char* label);
-static void HMIWidgetsSetValue(LV2_HMI_WidgetControl_Handle handle,
-                               LV2_HMI_Addressing addressing,
-                               const char* value);
-static void HMIWidgetsSetUnit(LV2_HMI_WidgetControl_Handle handle,
-                              LV2_HMI_Addressing addressing,
-                              const char* unit);
-static void HMIWidgetsSetIndicator(LV2_HMI_WidgetControl_Handle handle,
-                                   LV2_HMI_Addressing addressing,
-                                   float indicator_poss);
-static void HMIWidgetsPopupMessage(LV2_HMI_WidgetControl_Handle handle,
-                                   LV2_HMI_Addressing addressing,
-                                   LV2_HMI_Popup_Style style,
-                                   const char* title,
-                                   const char* text);
-#endif
 static char *GetLicenseFile(MOD_License_Handle handle, const char *license_uri);
 static int LogPrintf(LV2_Log_Handle handle, LV2_URID type, const char *fmt, ...);
 static int LogVPrintf(LV2_Log_Handle handle, LV2_URID type, const char *fmt, va_list ap);
@@ -1000,11 +871,6 @@ static LV2_Control_Port_State_Update_Status UpdateControlPortState(LV2_Control_P
                                                                    LV2_Control_Port_State state);
 static char* MakePluginStatePathFromSratchDir(LV2_State_Make_Path_Handle handle, const char *path);
 static char* MakePluginStatePathDuringLoadSave(LV2_State_Make_Path_Handle handle, const char *path);
-#ifdef HAVE_CONTROLCHAIN
-static void CCDataUpdate(void* arg);
-static void InitializeControlChainIfNeeded(void);
-static bool CheckCCDeviceProtocolVersion(int device_id, int major, int minor);
-#endif
 #ifdef HAVE_HYLIA
 static uint32_t GetHyliaOutputLatency(void);
 #endif
@@ -1598,7 +1464,7 @@ static void RunPostPonedEvents(int ignored_effect_id)
                     jack_ringbuffer_read(effect->events_out_buffer, (char*)&key, sizeof(uint32_t));
                     jack_ringbuffer_read(effect->events_out_buffer, (char*)&atom, sizeof(LV2_Atom));
 
-                    char *body = mod_calloc(1, atom.size);
+                    char *body = calloc(1, atom.size);
                     jack_ringbuffer_read(effect->events_out_buffer, body, atom.size);
 
                     supported = true;
@@ -1860,10 +1726,6 @@ static void* PostPonedEventsThread(void* arg)
 {
 #if defined(_MOD_DEVICE_RK358x)
     setpriority(PRIO_PROCESS, gettid(), -18);
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-    const pid_t tid = syscall(SYS_gettid);
-    if (tid > 0)
-        setpriority(PRIO_PROCESS, tid, -18);
 #endif
 
     while (g_postevents_running == 1)
@@ -1890,72 +1752,6 @@ static void* PostPonedEventsThread(void* arg)
 
     UNUSED_PARAM(arg);
 }
-
-#ifdef MOD_HMI_CONTROL_ENABLED
-static void* HMIClientThread(void* arg)
-{
-    sys_serial_shm_data_channel* const data = (sys_serial_shm_data_channel*)arg;
-
-    sys_serial_event_type etype;
-    char msg[SYS_SERIAL_SHM_DATA_SIZE];
-
-    while (g_hmi_data != NULL && &g_hmi_data->client == data)
-    {
-        if (sem_timedwait_secs(&data->sem, 1) != 0)
-            continue;
-
-        if (g_hmi_data == NULL || &g_hmi_data->client != data)
-            break;
-
-        while (data->head != data->tail)
-        {
-            if (! sys_serial_read(data, &etype, msg))
-                continue;
-
-            if (g_verbose_debug) {
-                printf("DEBUG: HMIClientThread received event %x (%c)\n", etype, etype-0x80);
-                fflush(stdout);
-            }
-
-            switch (etype)
-            {
-            case sys_serial_event_type_compressor_mode:
-                g_compressor_mode = clamp(msg[0] - '0', 0, 4);
-                monitor_client_setup_compressor(g_compressor_mode, g_compressor_release);
-                break;
-            case sys_serial_event_type_compressor_release:
-                g_compressor_release = clampf(atof(msg), 50.0f, 500.0f);
-                monitor_client_setup_compressor(g_compressor_mode, g_compressor_release);
-                break;
-#ifdef MOD_IO_PROCESSING_ENABLED
-            case sys_serial_event_type_noisegate_channel:
-                g_noisegate_channel = clamp(msg[0] - '0', 0, 3);
-                break;
-            case sys_serial_event_type_noisegate_decay:
-                g_noisegate_decay = clampf(atof(msg), 1.0f, 500.0f);
-                gate_update(&g_noisegate, g_sample_rate, 10, 1,
-                            g_noisegate_decay, 1,
-                            g_noisegate_threshold, g_noisegate_threshold - 20);
-                break;
-            case sys_serial_event_type_noisegate_threshold:
-                g_noisegate_threshold = clampf(atof(msg), -70.0f, -10.0f);
-                gate_update(&g_noisegate, g_sample_rate, 10, 1,
-                            g_noisegate_decay, 1,
-                            g_noisegate_threshold, g_noisegate_threshold - 20);
-                break;
-#endif
-            case sys_serial_event_type_pedalboard_gain:
-                monitor_client_setup_volume(clampf(atof(msg), MOD_MONITOR_VOLUME_MUTE, 20.0f));
-                break;
-            default:
-                break;
-            }
-        }
-    }
-
-    return NULL;
-}
-#endif
 
 static void PreRunPlugin(effect_t *effect)
 {
@@ -2477,17 +2273,6 @@ static int ProcessPlugin(jack_nframes_t nframes, void *arg)
         {
             buffer_out = jack_port_get_buffer(effect->output_cv_ports[i]->jack_port, nframes);
             memcpy(buffer_out, effect->output_cv_ports[i]->buffer, (sizeof(float) * nframes));
-        }
-
-        for (i = 0; i < effect->monitors_count; i++)
-        {
-            int port_id = effect->monitors[i]->port_id;
-            value = *(effect->ports[port_id]->buffer);
-            if (monitor_check_condition(effect->monitors[i]->op, effect->monitors[i]->value, value) &&
-                floats_differ_enough(value, effect->monitors[i]->last_notified_value)) {
-                if (monitor_send(effect->instance, effect->ports[port_id]->symbol, value) >= 0)
-                    effect->monitors[i]->last_notified_value = value;
-            }
         }
     }
 
@@ -3252,44 +3037,6 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
         }
     }
 
-#ifdef MOD_IO_PROCESSING_ENABLED
-    // Handle audio
-    const float *const audio_in1_buf = (float*)jack_port_get_buffer(g_audio_in1_port, nframes);
-    const float *const audio_in2_buf = (float*)jack_port_get_buffer(g_audio_in2_port, nframes);
-    /* */ float *const audio_out1_buf = (float*)jack_port_get_buffer(g_audio_out1_port, nframes);
-    /* */ float *const audio_out2_buf = (float*)jack_port_get_buffer(g_audio_out2_port, nframes);
-
-    switch (g_noisegate_channel)
-    {
-    case 0: // no gate
-        if (audio_out1_buf != audio_in1_buf)
-            memcpy(audio_out1_buf, audio_in1_buf, sizeof(float)*nframes);
-        if (audio_out2_buf != audio_in2_buf)
-            memcpy(audio_out2_buf, audio_in2_buf, sizeof(float)*nframes);
-        break;
-    case 1: // left channel only
-        if (audio_out2_buf != audio_in2_buf)
-            memcpy(audio_out2_buf, audio_in2_buf, sizeof(float)*nframes);
-        for (uint32_t i=0; i<nframes; ++i)
-            audio_out1_buf[i] = gate_push_sample_and_apply(&g_noisegate, audio_in1_buf[i]);
-        break;
-    case 2: // right channel only
-        if (audio_out1_buf != audio_in1_buf)
-            memcpy(audio_out1_buf, audio_in1_buf, sizeof(float)*nframes);
-        for (uint32_t i=0; i<nframes; ++i)
-            audio_out2_buf[i] = gate_push_sample_and_apply(&g_noisegate, audio_in2_buf[i]);
-        break;
-    case 3: // left & right channels
-        for (uint32_t i=0; i<nframes; ++i)
-        {
-            gate_push_samples_and_run(&g_noisegate, audio_in1_buf[i], audio_in2_buf[i]);
-            audio_out1_buf[i] = gate_apply(&g_noisegate, audio_in1_buf[i]);
-            audio_out2_buf[i] = gate_apply(&g_noisegate, audio_in2_buf[i]);
-        }
-        break;
-    }
-#endif
-
     // Handle audio monitors
     if (pthread_mutex_trylock(&g_audio_monitor_mutex) == 0)
     {
@@ -3499,7 +3246,7 @@ static void JackThreadInit(void* arg)
 
 static void GetFeatures(effect_t *effect)
 {
-    const LV2_Feature **features = (const LV2_Feature**) mod_calloc(FEATURE_TERMINATOR+1, sizeof(LV2_Feature*));
+    const LV2_Feature **features = (const LV2_Feature**) calloc(FEATURE_TERMINATOR+1, sizeof(LV2_Feature*));
 
     /* URI and URID Features are the same for all instances (global declaration) */
 
@@ -3555,9 +3302,6 @@ static void GetFeatures(effect_t *effect)
     features[URID_MAP_FEATURE]          = &g_urid_map_feature;
     features[URID_UNMAP_FEATURE]        = &g_urid_unmap_feature;
     features[OPTIONS_FEATURE]           = &g_options_feature;
-#ifdef MOD_HMI_CONTROL_ENABLED
-    features[HMI_WC_FEATURE]            = &g_hmi_wc_feature;
-#endif
     features[LICENSE_FEATURE]           = &g_license_feature;
     features[BUF_SIZE_POWER2_FEATURE]   = &g_buf_size_features[0];
     features[BUF_SIZE_FIXED_FEATURE]    = &g_buf_size_features[1];
@@ -3694,7 +3438,7 @@ static void LoadPresets(effect_t *effect)
     uint32_t presets_count = lilv_nodes_size(presets);
     effect->presets_count = presets_count;
     // allocate for presets
-    effect->presets = (preset_t **) mod_calloc(presets_count, sizeof(preset_t *));
+    effect->presets = (preset_t **) calloc(presets_count, sizeof(preset_t *));
     uint32_t j = 0;
     LILV_FOREACH(nodes, i, presets)
     {
@@ -3824,239 +3568,6 @@ static void ConnectToMIDIThroughPorts(void)
     }
 }
 
-#ifdef MOD_HMI_CONTROL_ENABLED
-static void HMIWidgetsSetLedWithBlink(LV2_HMI_WidgetControl_Handle handle,
-                                      LV2_HMI_Addressing addressing_ptr,
-                                      LV2_HMI_LED_Colour led_color,
-                                      int on_blink_time,
-                                      int off_blink_time)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetLedWithBlink %i: %i %i %i\n",
-               assignment_id, led_color, on_blink_time, off_blink_time);
-        fflush(stdout);
-    }
-
-    if (on_blink_time < 0)
-    {
-        if (on_blink_time < LV2_HMI_LED_Blink_Fast)
-            on_blink_time = LV2_HMI_LED_Blink_Fast;
-        off_blink_time = 0;
-    }
-    else
-    {
-        if (on_blink_time > 5000)
-            on_blink_time = 5000;
-
-        if (off_blink_time < 0)
-            off_blink_time = 0;
-        else if (off_blink_time > 5000)
-            off_blink_time = 5000;
-    }
-
-    char msg[32];
-    snprintf(msg, sizeof(msg), "%i %i %i %i", assignment_id, led_color, on_blink_time, off_blink_time);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_led_blink, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsSetLedWithBrightness(LV2_HMI_WidgetControl_Handle handle,
-                                           LV2_HMI_Addressing addressing_ptr,
-                                           LV2_HMI_LED_Colour led_color,
-                                           int brightness)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetLedWithBrightness %i: %i %i\n",
-               assignment_id, led_color, brightness);
-        fflush(stdout);
-    }
-
-    if (brightness < LV2_HMI_LED_Brightness_Normal)
-        brightness = LV2_HMI_LED_Brightness_Normal;
-    else if (brightness > 100)
-        brightness = 100;
-
-    char msg[32];
-    snprintf(msg, sizeof(msg), "%i %i %i", assignment_id, led_color, brightness);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_led_brightness, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsSetLabel(LV2_HMI_WidgetControl_Handle handle,
-                               LV2_HMI_Addressing addressing_ptr,
-                               const char* label)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetLabel %i: '%s'\n", assignment_id, label);
-        fflush(stdout);
-    }
-
-    char msg[24];
-    snprintf(msg, sizeof(msg), "%i %s", assignment_id, label);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_name, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsSetValue(LV2_HMI_WidgetControl_Handle handle,
-                               LV2_HMI_Addressing addressing_ptr,
-                               const char* value)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetValue %i: '%s'\n", assignment_id, value);
-        fflush(stdout);
-    }
-
-    char msg[24];
-    snprintf(msg, sizeof(msg), "%i %s", assignment_id, value);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_value, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsSetUnit(LV2_HMI_WidgetControl_Handle handle,
-                              LV2_HMI_Addressing addressing_ptr,
-                              const char* unit)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetUnit %i: '%s'\n", assignment_id, unit);
-        fflush(stdout);
-    }
-
-    char msg[24];
-    snprintf(msg, sizeof(msg), "%i %s", assignment_id, unit);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_unit, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsSetIndicator(LV2_HMI_WidgetControl_Handle handle,
-                                   LV2_HMI_Addressing addressing_ptr,
-                                   float indicator_poss)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsSetIndicator %i: %f\n", assignment_id, indicator_poss);
-        fflush(stdout);
-    }
-
-    if (indicator_poss < 0.0f)
-        indicator_poss = 0.0f;
-    else if (indicator_poss > 1.0f)
-        indicator_poss = 1.0f;
-
-    char msg[32];
-    snprintf(msg, sizeof(msg), "%i %f", assignment_id, indicator_poss);
-    msg[31] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_widget_indicator, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-static void HMIWidgetsPopupMessage(LV2_HMI_WidgetControl_Handle handle,
-                                   LV2_HMI_Addressing addressing_ptr,
-                                   LV2_HMI_Popup_Style style,
-                                   const char* title,
-                                   const char* text)
-{
-    if (handle == NULL || addressing_ptr == NULL || g_hmi_data == NULL) {
-        return;
-    }
-
-    const hmi_addressing_t *addressing = (const hmi_addressing_t*)addressing_ptr;
-
-    const int assignment_id = addressing->actuator_id;
-    const uint8_t page = addressing->page;
-    const uint8_t subpage = addressing->subpage;
-
-    if (g_verbose_debug) {
-        printf("DEBUG: HMIWidgetsPopupMessage %i: %i '%s' '%s'\n", assignment_id, style, title, text);
-        fflush(stdout);
-    }
-
-    char msg[256];
-    snprintf(msg, sizeof(msg), "%i %i \"%s\" \"%s\"", assignment_id, style, title, text);
-    msg[sizeof(msg)-1] = '\0';
-
-    pthread_mutex_lock(&g_hmi_mutex);
-    sys_serial_write(&g_hmi_data->server, sys_serial_event_type_popup, page, subpage, msg);
-    pthread_mutex_unlock(&g_hmi_mutex);
-}
-
-#endif
-
 static char* GetLicenseFile(MOD_License_Handle handle, const char *license_uri)
 {
     if (!license_uri || *license_uri == '\0')
@@ -4119,7 +3630,7 @@ static char* GetLicenseFile(MOD_License_Handle handle, const char *license_uri)
         goto end;
 
     // allocate file buffer
-    filebuffer = (char*)mod_calloc(1, filesize+1);
+    filebuffer = (char*)calloc(1, filesize+1);
     if (! filebuffer)
         goto end;
 
@@ -4338,129 +3849,6 @@ static char* MakePluginStatePathDuringLoadSave(LV2_State_Make_Path_Handle handle
     return MakePluginStatePath(effect->instance, effect->state_dir, path);
 }
 
-#ifdef HAVE_CONTROLCHAIN
-static void CCDataUpdate(void* arg)
-{
-    cc_update_list_t *updates = arg;
-
-    bool is_bypass, needs_post = false;
-    const int device_id = updates->device_id;
-
-    for (int i = 0; i < updates->count; i++)
-    {
-        cc_update_data_t *data = &updates->list[i];
-        assignment_t *assignment =
-            &g_assignments_list[device_id][data->assignment_id];
-
-        if (!assignment->port)
-            continue;
-
-        if (g_verbose_debug) {
-            printf("DEBUG: CCDataUpdate received %f as value of portsymbol %s (with prev value as %f)\n",
-                   data->value, assignment->port->symbol, assignment->port->prev_value);
-            fflush(stdout);
-        }
-
-        // invert value if bypass
-        if ((is_bypass = !strcmp(assignment->port->symbol, g_bypass_port_symbol)))
-            data->value = 1.0f - data->value;
-
-        // ignore requests for same value
-        if (!floats_differ_enough(assignment->port->prev_value, data->value))
-        {
-            if (g_verbose_debug) {
-                puts("DEBUG: CCDataUpdate ignoring value change (matches previous value)");
-                fflush(stdout);
-            }
-            continue;
-        }
-
-        if (SetPortValue(assignment->port, data->value, assignment->effect_id, is_bypass, false))
-            needs_post = true;
-    }
-
-    if (needs_post)
-        sem_post(&g_postevents_semaphore);
-}
-
-static void InitializeControlChainIfNeeded(void)
-{
-    if (g_cc_client != NULL)
-        return;
-
-    if ((g_cc_client = cc_client_new("/tmp/control-chain.sock")) != NULL)
-        cc_client_data_update_cb(g_cc_client, CCDataUpdate);
-}
-
-static bool CheckCCDeviceProtocolVersion(int device_id, int major, int minor)
-{
-    char *descriptor = cc_client_device_descriptor(g_cc_client, device_id);
-
-    if (!descriptor)
-    {
-        printf("CheckCCDeviceProtocolVersion error: failed to get device descriptor with id %i\n", device_id);
-        return false;
-    }
-
-    // we quickly parse the json ourselves in order to prevent adding more dependencies into mod-host
-    const char *vsplit, *vstart, *vend;
-
-    vsplit = strstr(descriptor, "\"protocol\":");
-    if (!vsplit)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field");
-        goto free;
-    }
-
-    vstart = strstr(vsplit+10, "\"");
-    if (!vstart)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field start");
-        goto free;
-    }
-    ++vstart;
-
-    vend = strstr(vstart, "\"");
-    if (!vend)
-    {
-        puts("CheckCCDeviceProtocolVersion error: failed to find protocol field end");
-        goto free;
-    }
-
-    char buf_major[8] = {0};
-    char buf_minor[8] = {0};
-    char *buf = buf_major;
-
-    for (int i=0; i<7; ++vstart)
-    {
-        if (*vstart >= '0' && *vstart <= '9')
-        {
-            buf[i++] = *vstart;
-            continue;
-        }
-
-        if (*vstart == '.' && buf == buf_major)
-        {
-            i = 0;
-            buf = buf_minor;
-            continue;
-        }
-
-        break;
-    }
-
-    const int device_major = atoi(buf_major);
-    const int device_minor = atoi(buf_minor);
-
-    free(descriptor);
-    return device_major >= major && device_minor >= minor;
-
-free:
-    free(descriptor);
-    return false;
-}
-#endif
-
 #ifdef HAVE_HYLIA
 static uint32_t GetHyliaOutputLatency(void)
 {
@@ -4542,24 +3930,6 @@ int effects_init(void* client)
         return ERR_JACK_PORT_REGISTER;
     }
 
-#ifdef MOD_IO_PROCESSING_ENABLED
-    g_audio_in1_port = jack_port_register(g_jack_global_client, "in1", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
-    g_audio_in2_port = jack_port_register(g_jack_global_client, "in2", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
-    g_audio_out1_port = jack_port_register(g_jack_global_client, "out1", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
-    g_audio_out2_port = jack_port_register(g_jack_global_client, "out2", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
-
-    if (! (g_audio_in1_port && g_audio_in2_port && g_audio_out1_port && g_audio_out2_port))
-    {
-        fprintf(stderr, "can't register global jack audio ports\n");
-        if (client == NULL)
-            jack_client_close(g_jack_global_client);
-        return ERR_JACK_PORT_REGISTER;
-    }
-
-    jack_port_tie(g_audio_in1_port, g_audio_out1_port);
-    jack_port_tie(g_audio_in2_port, g_audio_out2_port);
-#endif
-
     if (g_jack_global_client != NULL && strcmp(jack_get_client_name(g_jack_global_client), "mod-host") == 0 && ! monitor_client_init())
     {
         return ERR_JACK_CLIENT_CREATION;
@@ -4589,9 +3959,6 @@ int effects_init(void* client)
     pthread_mutex_init(&g_audio_monitor_mutex, &mutex_atts);
     pthread_mutex_init(&g_midi_learning_mutex, &mutex_atts);
     pthread_mutex_init(&g_sync_scheduled_params_mutex, &mutex_atts);
-#ifdef MOD_HMI_CONTROL_ENABLED
-    pthread_mutex_init(&g_hmi_mutex, &mutex_atts);
-#endif
 
     sem_init(&g_postevents_semaphore, 0, 0);
 
@@ -4774,7 +4141,6 @@ int effects_init(void* client)
     g_lilv_nodes.enumeration = lilv_new_uri(g_lv2_data, LV2_CORE__enumeration);
     g_lilv_nodes.event = lilv_new_uri(g_lv2_data, LILV_URI_EVENT_PORT);
     g_lilv_nodes.freeWheeling = lilv_new_uri(g_lv2_data, LV2_CORE__freeWheeling);
-    g_lilv_nodes.hmi_interface = lilv_new_uri(g_lv2_data, LV2_HMI__PluginNotification);
     g_lilv_nodes.input = lilv_new_uri(g_lv2_data, LILV_URI_INPUT_PORT);
     g_lilv_nodes.integer = lilv_new_uri(g_lv2_data, LV2_CORE__integer);
     g_lilv_nodes.license_interface = lilv_new_uri(g_lv2_data, MOD_LICENSE__interface);
@@ -4786,17 +4152,6 @@ int effects_init(void* client)
     g_lilv_nodes.minimumSize = lilv_new_uri(g_lv2_data, LV2_RESIZE_PORT__minimumSize);
     g_lilv_nodes.mod_cvport = lilv_new_uri(g_lv2_data, LILV_NS_MOD "CVPort");
     g_lilv_nodes.mod_default = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default");
-#if defined(_MOD_DEVICE_DUO)
-    g_lilv_nodes.mod_default_custom = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default_duo");
-#elif defined(_MOD_DEVICE_DUOX)
-    g_lilv_nodes.mod_default_custom = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default_duox");
-#elif defined(_MOD_DEVICE_DWARF)
-    g_lilv_nodes.mod_default_custom = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default_dwarf");
-#elif defined(_MOD_DEVICE_X86_64)
-    g_lilv_nodes.mod_default_custom = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default_x64");
-#else
-    g_lilv_nodes.mod_default_custom = NULL;
-#endif
     g_lilv_nodes.mod_maximum = lilv_new_uri(g_lv2_data, LILV_NS_MOD "maximum");
     g_lilv_nodes.mod_minimum = lilv_new_uri(g_lv2_data, LILV_NS_MOD "minimum");
     g_lilv_nodes.noPreRun = lilv_new_uri(g_lv2_data, "http://www.darkglass.com/lv2/ns#noPreRun");
@@ -4946,40 +4301,6 @@ int effects_init(void* client)
     g_options[8].type = 0;
     g_options[8].value = NULL;
 
-#ifdef MOD_HMI_CONTROL_ENABLED
-    g_hmi_wc.size                    = sizeof(g_hmi_wc);
-    g_hmi_wc.set_led_with_blink      = HMIWidgetsSetLedWithBlink;
-    g_hmi_wc.set_led_with_brightness = HMIWidgetsSetLedWithBrightness;
-    g_hmi_wc.set_label               = HMIWidgetsSetLabel;
-    g_hmi_wc.set_value               = HMIWidgetsSetValue;
-    g_hmi_wc.set_unit                = HMIWidgetsSetUnit;
-    g_hmi_wc.set_indicator           = HMIWidgetsSetIndicator;
-    g_hmi_wc.popup_message           = HMIWidgetsPopupMessage;
-
-    if (client != NULL)
-    {
-        // HMI integration setup
-        if (sys_serial_open(&g_hmi_shmfd, &g_hmi_data))
-        {
-            g_hmi_wc.handle = g_hmi_data;
-            sys_serial_write(&g_hmi_data->server, sys_serial_event_type_special_req, 0, 0, "restart");
-            zix_thread_create(&g_hmi_client_thread, 0, HMIClientThread, &g_hmi_data->client);
-        }
-        else
-        {
-            g_hmi_wc.handle = NULL;
-            fprintf(stderr, "sys_host HMI setup failed\n");
-        }
-    }
-
-    for (int i = 0; i < MAX_HMI_ADDRESSINGS; i++)
-        g_hmi_addressings[i].actuator_id = -1;
-#endif
-
-#ifdef MOD_IO_PROCESSING_ENABLED
-    gate_init(&g_noisegate);
-#endif
-
     g_license.handle = NULL;
     g_license.license = GetLicenseFile;
     g_license.free = FreePluginString;
@@ -5010,20 +4331,6 @@ int effects_init(void* client)
 
     memset(g_monitored_midi_controls, 0, sizeof(g_monitored_midi_controls));
     memset(g_monitored_midi_programs, 0, sizeof(g_monitored_midi_programs));
-
-#ifdef HAVE_CONTROLCHAIN
-    /* Init the control chain variables */
-    memset(&g_assignments_list, 0, sizeof(g_assignments_list));
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            g_assignments_list[i][j].effect_id = ASSIGNMENT_NULL;
-            g_assignments_list[i][j].assignment_pair_id = -1;
-        }
-    }
-#endif
 
     /* Start the thread that consumes from the event queue */
     g_postevents_running = 1;
@@ -5057,30 +4364,6 @@ int effects_init(void* client)
         ConnectToAllHardwareMIDIPorts();
     }
 
-#ifdef MOD_IO_PROCESSING_ENABLED
-    /* Connect to capture ports if avaiable */
-    if (g_capture_ports != NULL && g_capture_ports[0] != NULL)
-    {
-        const char *ourportname;
-#ifndef _MOD_DEVICE_DWARF
-        ourportname = jack_port_name(g_audio_in1_port);
-#else
-        ourportname = jack_port_name(g_audio_in2_port);
-#endif
-        jack_connect(g_jack_global_client, g_capture_ports[0], ourportname);
-
-        if (g_capture_ports[1] != NULL)
-        {
-#ifndef _MOD_DEVICE_DWARF
-            ourportname = jack_port_name(g_audio_in2_port);
-#else
-            ourportname = jack_port_name(g_audio_in1_port);
-#endif
-            jack_connect(g_jack_global_client, g_capture_ports[1], ourportname);
-        }
-    }
-#endif
-
     g_processing_enabled = true;
 
     return SUCCESS;
@@ -5100,27 +4383,6 @@ int effects_finish(int close_client)
 
     effects_remove(REMOVE_ALL);
 
-#ifdef MOD_HMI_CONTROL_ENABLED
-    if (g_hmi_data != NULL)
-    {
-        sys_serial_shm_data* hmi_data = g_hmi_data;
-        g_hmi_data = NULL;
-
-        sem_post(&hmi_data->client.sem);
-        zix_thread_join(g_hmi_client_thread, NULL);
-
-        sys_serial_close(g_hmi_shmfd, hmi_data);
-    }
-#endif
-
-#ifdef HAVE_CONTROLCHAIN
-    if (g_cc_client)
-    {
-        cc_client_delete(g_cc_client);
-        g_cc_client = NULL;
-    }
-#endif
-
     if (g_capture_ports) jack_free(g_capture_ports);
     if (g_playback_ports) jack_free(g_playback_ports);
     if (close_client) jack_client_close(g_jack_global_client);
@@ -5135,7 +4397,6 @@ int effects_finish(int close_client)
     lilv_node_free(g_lilv_nodes.enumeration);
     lilv_node_free(g_lilv_nodes.event);
     lilv_node_free(g_lilv_nodes.freeWheeling);
-    lilv_node_free(g_lilv_nodes.hmi_interface);
     lilv_node_free(g_lilv_nodes.input);
     lilv_node_free(g_lilv_nodes.integer);
     lilv_node_free(g_lilv_nodes.license_interface);
@@ -5147,7 +4408,6 @@ int effects_finish(int close_client)
     lilv_node_free(g_lilv_nodes.minimumSize);
     lilv_node_free(g_lilv_nodes.mod_cvport);
     lilv_node_free(g_lilv_nodes.mod_default);
-    lilv_node_free(g_lilv_nodes.mod_default_custom);
     lilv_node_free(g_lilv_nodes.mod_maximum);
     lilv_node_free(g_lilv_nodes.mod_minimum);
     lilv_node_free(g_lilv_nodes.noPreRun);
@@ -5179,9 +4439,6 @@ int effects_finish(int close_client)
     pthread_mutex_destroy(&g_audio_monitor_mutex);
     pthread_mutex_destroy(&g_midi_learning_mutex);
     pthread_mutex_destroy(&g_sync_scheduled_params_mutex);
-#ifdef MOD_HMI_CONTROL_ENABLED
-    pthread_mutex_destroy(&g_hmi_mutex);
-#endif
 
     effect_t *effect = &g_effects[GLOBAL_EFFECT_ID];
     if (effect->ports)
@@ -5243,7 +4500,7 @@ int effects_add(const char *uri, int instance, int activate)
     effect = &g_effects[instance];
 
     /* Init the struct */
-    mod_memset(effect, 0, sizeof(effect_t));
+    memset(effect, 0, sizeof(effect_t));
     effect->instance = instance;
     effect->jack_activated = activate;
     effect->lv2_activated = true;
@@ -5390,15 +4647,6 @@ int effects_add(const char *uri, int instance, int activate)
         }
     }
 
-#ifdef __MOD_DEVICES__
-    if (lilv_plugin_has_extension_data(effect->lilv_plugin, g_lilv_nodes.hmi_interface))
-    {
-        effect->hmi_notif =
-            (const LV2_HMI_PluginNotification*) lilv_instance_get_extension_data(lilv_instance,
-                                                                                 LV2_HMI__PluginNotification);
-    }
-#endif
-
     /* Create the URI for identify the ports */
     ports_count = lilv_plugin_get_num_ports(plugin);
 
@@ -5417,15 +4665,13 @@ int effects_add(const char *uri, int instance, int activate)
     output_event_ports_count = 0;
     effect->presets_count = 0;
     effect->presets = NULL;
-    effect->monitors_count = 0;
-    effect->monitors = NULL;
     effect->ports_count = ports_count;
-    effect->ports = (port_t **) mod_calloc(ports_count, sizeof(port_t *));
+    effect->ports = (port_t **) calloc(ports_count, sizeof(port_t *));
 
     for (unsigned int i = 0; i < ports_count; i++)
     {
         /* Allocate memory to current port */
-        effect->ports[i] = port = (port_t *) mod_calloc(1, sizeof(port_t));
+        effect->ports[i] = port = (port_t *) calloc(1, sizeof(port_t));
 
         pthread_mutex_init(&port->cv_source_mutex, &mutex_atts);
 
@@ -5458,7 +4704,7 @@ int effects_add(const char *uri, int instance, int activate)
             port->type = TYPE_AUDIO;
 
             /* Allocate memory to audio buffer */
-            audio_buffer = (float *) mod_calloc(g_sample_rate, sizeof(float));
+            audio_buffer = (float *) calloc(g_sample_rate, sizeof(float));
             if (!audio_buffer)
             {
                 fprintf(stderr, "can't get audio buffer\n");
@@ -5548,11 +4794,7 @@ int effects_add(const char *uri, int instance, int activate)
             }
             else
             {
-                LilvNodes* lilvvalue_default = g_lilv_nodes.mod_default_custom != NULL
-                                             ? lilv_port_get_value(plugin, lilv_port, g_lilv_nodes.mod_default_custom)
-                                             : NULL;
-                if (lilvvalue_default == NULL)
-                    lilvvalue_default = lilv_port_get_value(plugin, lilv_port, g_lilv_nodes.mod_default);
+                LilvNodes* lilvvalue_default = lilv_port_get_value(plugin, lilv_port, g_lilv_nodes.mod_default);
                 if (lilvvalue_default == NULL)
                     lilvvalue_default = lilv_port_get_value(plugin, lilv_port, g_lilv_nodes.default_);
 
@@ -5610,7 +4852,7 @@ int effects_add(const char *uri, int instance, int activate)
             port->type = TYPE_CV;
 
             /* Allocate memory to cv buffer */
-            cv_buffer = (float *) mod_calloc(g_sample_rate, sizeof(float));
+            cv_buffer = (float *) calloc(g_sample_rate, sizeof(float));
             if (!cv_buffer)
             {
                 fprintf(stderr, "can't get cv buffer\n");
@@ -5670,7 +4912,7 @@ int effects_add(const char *uri, int instance, int activate)
                 jack_uuid_t uuid = jack_port_uuid(jack_port);
                 if (!jack_uuid_empty(uuid)) {
                     char str_value[32];
-                    mod_memset(str_value, 0, sizeof(str_value));
+                    memset(str_value, 0, sizeof(str_value));
 
                     snprintf(str_value, 31, "%f", min_value);
                     jack_set_property(jack_client, uuid, LV2_CORE__minimum, str_value, NULL);
@@ -5862,17 +5104,17 @@ int effects_add(const char *uri, int instance, int activate)
     if (audio_ports_count > 0)
     {
         effect->audio_ports_count = audio_ports_count;
-        effect->audio_ports = (port_t **) mod_calloc(audio_ports_count, sizeof(port_t *));
+        effect->audio_ports = (port_t **) calloc(audio_ports_count, sizeof(port_t *));
 
         if (input_audio_ports_count > 0)
         {
             effect->input_audio_ports_count = input_audio_ports_count;
-            effect->input_audio_ports = (port_t **) mod_calloc(input_audio_ports_count, sizeof(port_t *));
+            effect->input_audio_ports = (port_t **) calloc(input_audio_ports_count, sizeof(port_t *));
         }
         if (output_audio_ports_count > 0)
         {
             effect->output_audio_ports_count = output_audio_ports_count;
-            effect->output_audio_ports = (port_t **) mod_calloc(output_audio_ports_count, sizeof(port_t *));
+            effect->output_audio_ports = (port_t **) calloc(output_audio_ports_count, sizeof(port_t *));
         }
     }
 
@@ -5880,17 +5122,17 @@ int effects_add(const char *uri, int instance, int activate)
     if (control_ports_count > 0)
     {
         effect->control_ports_count = control_ports_count;
-        effect->control_ports = (port_t **) mod_calloc(control_ports_count, sizeof(port_t *));
+        effect->control_ports = (port_t **) calloc(control_ports_count, sizeof(port_t *));
 
         if (input_control_ports_count > 0)
         {
             effect->input_control_ports_count = input_control_ports_count;
-            effect->input_control_ports = (port_t **) mod_calloc(input_control_ports_count, sizeof(port_t *));
+            effect->input_control_ports = (port_t **) calloc(input_control_ports_count, sizeof(port_t *));
         }
         if (output_control_ports_count > 0)
         {
             effect->output_control_ports_count = output_control_ports_count;
-            effect->output_control_ports = (port_t **) mod_calloc(output_control_ports_count, sizeof(port_t *));
+            effect->output_control_ports = (port_t **) calloc(output_control_ports_count, sizeof(port_t *));
         }
     }
 
@@ -5898,17 +5140,17 @@ int effects_add(const char *uri, int instance, int activate)
     if (cv_ports_count > 0)
     {
         effect->cv_ports_count = cv_ports_count;
-        effect->cv_ports = (port_t **) mod_calloc(cv_ports_count, sizeof(port_t *));
+        effect->cv_ports = (port_t **) calloc(cv_ports_count, sizeof(port_t *));
 
         if (input_cv_ports_count > 0)
         {
             effect->input_cv_ports_count = input_cv_ports_count;
-            effect->input_cv_ports = (port_t **) mod_calloc(input_cv_ports_count, sizeof(port_t *));
+            effect->input_cv_ports = (port_t **) calloc(input_cv_ports_count, sizeof(port_t *));
         }
         if (output_cv_ports_count > 0)
         {
             effect->output_cv_ports_count = output_cv_ports_count;
-            effect->output_cv_ports = (port_t **) mod_calloc(output_cv_ports_count, sizeof(port_t *));
+            effect->output_cv_ports = (port_t **) calloc(output_cv_ports_count, sizeof(port_t *));
         }
     }
 
@@ -5916,17 +5158,17 @@ int effects_add(const char *uri, int instance, int activate)
     if (event_ports_count > 0)
     {
         effect->event_ports_count = event_ports_count;
-        effect->event_ports = (port_t **) mod_calloc(event_ports_count, sizeof(port_t *));
+        effect->event_ports = (port_t **) calloc(event_ports_count, sizeof(port_t *));
 
         if (input_event_ports_count > 0)
         {
             effect->input_event_ports_count = input_event_ports_count;
-            effect->input_event_ports = (port_t **) mod_calloc(input_event_ports_count, sizeof(port_t *));
+            effect->input_event_ports = (port_t **) calloc(input_event_ports_count, sizeof(port_t *));
         }
         if (output_event_ports_count > 0)
         {
             effect->output_event_ports_count = output_event_ports_count;
-            effect->output_event_ports = (port_t **) mod_calloc(output_event_ports_count, sizeof(port_t *));
+            effect->output_event_ports = (port_t **) calloc(output_event_ports_count, sizeof(port_t *));
         }
     }
 
@@ -6033,7 +5275,7 @@ int effects_add(const char *uri, int instance, int activate)
             g_lilv_nodes.patch_readable,
             NULL);
         effect->properties_count = lilv_nodes_size(writable_properties) + lilv_nodes_size(readable_properties);
-        effect->properties = (property_t **) mod_calloc(effect->properties_count, sizeof(property_t *));
+        effect->properties = (property_t **) calloc(effect->properties_count, sizeof(property_t *));
 
         // TODO mix readable and writable
         uint32_t j = 0;
@@ -6325,53 +5567,6 @@ static void effects_remove_inner_pre(int effect_id)
             g_midi_cc_list[j].port = NULL;
         }
 
-#ifdef HAVE_CONTROLCHAIN
-        if (g_cc_client)
-        {
-            for (int i = 0; i < CC_MAX_DEVICES; i++)
-            {
-                for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-                {
-                    assignment_t *assignment = &g_assignments_list[i][j];
-
-                    if (assignment->effect_id == ASSIGNMENT_NULL)
-                        break;
-                    if (assignment->effect_id == ASSIGNMENT_UNUSED)
-                        continue;
-
-                    cc_assignment_key_t key = {0};
-                    key.id = assignment->assignment_id;
-                    key.device_id = assignment->device_id;
-                    key.pair_id = assignment->assignment_pair_id;
-                    cc_client_unassignment(g_cc_client, &key);
-                }
-            }
-        }
-
-        mod_memset(&g_assignments_list, 0, sizeof(g_assignments_list));
-
-        for (int i = 0; i < CC_MAX_DEVICES; i++)
-        {
-            for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-            {
-                g_assignments_list[i][j].effect_id = ASSIGNMENT_NULL;
-                g_assignments_list[i][j].assignment_pair_id = -1;
-            }
-        }
-#endif
-
-#ifdef MOD_HMI_CONTROL_ENABLED
-        for (int i = 0; i < MAX_HMI_ADDRESSINGS; i++)
-            g_hmi_addressings[i].actuator_id = -1;
-
-        if (g_hmi_data != NULL)
-        {
-            pthread_mutex_lock(&g_hmi_mutex);
-            sys_serial_write(&g_hmi_data->server, sys_serial_event_type_special_req, 0, 0, "pages");
-            pthread_mutex_unlock(&g_hmi_mutex);
-        }
-#endif
-
         // this resets volume back 0dB if needed
         // monitor_client_setup_volume(0.0f);
 
@@ -6446,36 +5641,6 @@ static void effects_remove_inner_pre(int effect_id)
             g_midi_cc_list[j].symbol = NULL;
             g_midi_cc_list[j].port = NULL;
         }
-
-#ifdef HAVE_CONTROLCHAIN
-        for (int i = 0; i < CC_MAX_DEVICES; i++)
-        {
-            for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-            {
-                assignment_t *assignment = &g_assignments_list[i][j];
-
-                if (assignment->effect_id == ASSIGNMENT_NULL)
-                    break;
-                if (assignment->effect_id == ASSIGNMENT_UNUSED)
-                    continue;
-                if (assignment->effect_id != effect_id)
-                    continue;
-
-                if (g_cc_client)
-                {
-                    cc_assignment_key_t key = {0};
-                    key.id = assignment->assignment_id;
-                    key.device_id = assignment->device_id;
-                    key.pair_id = assignment->assignment_pair_id;
-                    cc_client_unassignment(g_cc_client, &key);
-                }
-
-                mod_memset(assignment, 0, sizeof(assignment_t));
-                assignment->effect_id = ASSIGNMENT_UNUSED;
-                assignment->assignment_pair_id = -1;
-            }
-        }
-#endif
     }
 }
 
@@ -6510,27 +5675,6 @@ static void effects_remove_inner_loop(int effect_id)
         {
             if (effect->ports[i])
             {
-#ifdef MOD_HMI_CONTROL_ENABLED
-                if (effect->ports[i]->hmi_addressing != NULL)
-                {
-                    if (g_hmi_data != NULL)
-                    {
-                        char msg[24];
-                        snprintf(msg, sizeof(msg), "%i", effect->ports[i]->hmi_addressing->actuator_id);
-                        msg[sizeof(msg)-1] = '\0';
-
-                        pthread_mutex_lock(&g_hmi_mutex);
-                        sys_serial_write(&g_hmi_data->server,
-                                          sys_serial_event_type_unassign,
-                                          effect->ports[i]->hmi_addressing->page,
-                                          effect->ports[i]->hmi_addressing->subpage, msg);
-                        pthread_mutex_unlock(&g_hmi_mutex);
-                    }
-
-                    effect->ports[i]->hmi_addressing->actuator_id = -1;
-                }
-#endif
-
                 // TODO destroy port mutexes
                 free(effect->ports[i]->buffer);
 
@@ -7752,50 +6896,6 @@ int effects_get_property(int effect_id, const char *uri)
     return ERR_INSTANCE_NON_EXISTS;
 }
 
-int effects_monitor_parameter(int effect_id, const char *control_symbol, const char *op, float value)
-{
-    float v;
-    int ret = effects_get_parameter(effect_id, control_symbol, &v);
-
-    if (ret != SUCCESS)
-        return ret;
-
-    int iop;
-    if (strcmp(op, ">") == 0)
-        iop = 0;
-    else if (strcmp(op, ">=") == 0)
-        iop = 1;
-    else if (strcmp(op, "<") == 0)
-        iop = 2;
-    else if (strcmp(op, "<=") == 0)
-        iop = 3;
-    else if (strcmp(op, "==") == 0)
-        iop = 4;
-    else if (strcmp(op, "!=") == 0)
-        iop = 5;
-    else
-        return ERR_ASSIGNMENT_INVALID_OP;
-
-
-    effect_t *effect = &g_effects[effect_id];
-    const LilvNode *symbol = lilv_new_string(g_lv2_data, control_symbol);
-    const LilvPort *port = lilv_plugin_get_port_by_symbol(effect->lilv_plugin, symbol);
-
-    int port_id = lilv_port_get_index(effect->lilv_plugin, port);
-
-    effect->monitors_count++;
-    effect->monitors =
-        (monitor_t**)realloc(effect->monitors, sizeof(monitor_t *) * effect->monitors_count);
-
-    int idx = effect->monitors_count - 1;
-    effect->monitors[idx] = (monitor_t*)malloc(sizeof(monitor_t));
-    effect->monitors[idx]->port_id = port_id;
-    effect->monitors[idx]->op = iop;
-    effect->monitors[idx]->value = value;
-    effect->monitors[idx]->last_notified_value = 0.0;
-    return SUCCESS;
-}
-
 int effects_monitor_output_parameter(int effect_id, const char *control_symbol_or_uri, int enable)
 {
     port_t *port;
@@ -8290,316 +7390,6 @@ int effects_set_beats_per_bar(float bpb)
   return result;
 }
 
-int effects_cc_map(int effect_id, const char *control_symbol, int device_id, int actuator_id,
-                   const char *label, float value, float minimum, float maximum, int steps, int extraflags,
-                   const char *unit, int scalepoints_count, const scalepoint_t *scalepoints)
-{
-#ifdef HAVE_CONTROLCHAIN
-    InitializeControlChainIfNeeded();
-
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-    if (scalepoints_count == 1 || extraflags < 0)
-        return ERR_ASSIGNMENT_INVALID_OP;
-
-    effect_t *effect = &(g_effects[effect_id]);
-    port_t *port = FindEffectInputPortBySymbol(effect, control_symbol);
-
-    if (port == NULL)
-        return ERR_LV2_INVALID_PARAM_SYMBOL;
-
-    cc_assignment_t assignment = {0};
-    assignment.device_id = device_id;
-    assignment.actuator_id = actuator_id;
-    assignment.label = label;
-    assignment.value = value;
-    assignment.min   = minimum;
-    assignment.max   = maximum;
-    assignment.def   = port->def_value;
-    assignment.steps = steps;
-    assignment.unit  = unit;
-    assignment.list_count = scalepoints_count;
-    assignment.actuator_pair_id = -1;
-    assignment.assignment_pair_id = -1;
-
-    if (extraflags & CC_MODE_TAP_TEMPO)
-        assignment.mode = CC_MODE_TAP_TEMPO;
-    else if (port->hints & HINT_TOGGLE)
-        assignment.mode = CC_MODE_TOGGLE;
-    else if (port->hints & HINT_INTEGER)
-        assignment.mode = CC_MODE_INTEGER;
-    else
-        assignment.mode = CC_MODE_REAL;
-
-    if (port->hints & HINT_LOGARITHMIC)
-        assignment.mode |= CC_MODE_LOGARITHMIC;
-    if (port->hints & HINT_TRIGGER)
-        assignment.mode |= CC_MODE_TRIGGER;
-
-    if (extraflags & CC_MODE_COLOURED)
-        assignment.mode = CC_MODE_COLOURED;
-    if (extraflags & CC_MODE_MOMENTARY)
-        assignment.mode = CC_MODE_MOMENTARY;
-
-    cc_item_t *item_data;
-
-    if (scalepoints_count >= 2)
-    {
-        item_data = malloc(sizeof(cc_item_t)*scalepoints_count);
-        assignment.list_items = malloc(sizeof(cc_item_t*)*scalepoints_count);
-
-        if (assignment.list_items != NULL && item_data != NULL)
-        {
-            assignment.mode |= CC_MODE_OPTIONS;
-
-            for (int i = 0; i < scalepoints_count; i++)
-            {
-                item_data[i].label = scalepoints[i].label;
-                item_data[i].value = scalepoints[i].value;
-                assignment.list_items[i] = item_data + i;
-            }
-        }
-        else
-        {
-            free(item_data);
-            free(assignment.list_items);
-            return ERR_MEMORY_ALLOCATION;
-        }
-    }
-    else
-    {
-        item_data = NULL;
-        assignment.list_items = NULL;
-    }
-
-    if (!strcmp(control_symbol, g_bypass_port_symbol))
-    {
-        // invert value for bypass
-        assignment.value = value > 0.5f ? 0.0f : 1.0f;
-        assignment.def = 1.0f;
-    }
-    else if (!strcmp(control_symbol, g_presets_port_symbol))
-    {
-        // virtual presets port
-        port->min_value = minimum;
-        port->max_value = maximum;
-        port->def_value = port->prev_value = *(port->buffer) = value;
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_map sending:");
-        printf("\tdevice_id:   %i\n", assignment.device_id);
-        printf("\tactuator_id: %i\n", assignment.actuator_id);
-        printf("\tmode:        %x\n", assignment.mode);
-        printf("\tlabel:       \"%s\"\n", assignment.label);
-        printf("\tmin:         %f\n", assignment.min);
-        printf("\tmax:         %f\n", assignment.max);
-        printf("\tdef:         %f\n", assignment.def);
-        printf("\tvalue:       %f\n", assignment.value);
-        printf("\tsteps:       %i\n", assignment.steps);
-        printf("\tunit:        \"%s\"\n", assignment.unit);
-        printf("\tlist_count:  %i\n", assignment.list_count);
-        for (int i = 0; i < scalepoints_count; i++)
-            printf("\t #%02i: %f \"%s\"\n", i+1, scalepoints[i].value, scalepoints[i].label);
-        fflush(stdout);
-    }
-
-    const int assignment_id = cc_client_assignment(g_cc_client, &assignment);
-
-    free(item_data);
-    free(assignment.list_items);
-
-    if (assignment_id < 0)
-    {
-        if (g_verbose_debug) {
-            puts("DEBUG: cc_map failed");
-            fflush(stdout);
-        }
-        return ERR_ASSIGNMENT_FAILED;
-    }
-
-    assignment_t *item = &g_assignments_list[assignment.device_id][assignment_id];
-
-    item->effect_id = effect_id;
-    item->port = port;
-    item->device_id = device_id;
-    item->actuator_id = actuator_id;
-    item->assignment_id = assignment_id;
-    item->actuator_pair_id = assignment.actuator_pair_id;
-    item->assignment_pair_id = assignment.assignment_pair_id;
-    item->supports_set_value = CheckCCDeviceProtocolVersion(device_id, 0, 6);
-
-    if (assignment.assignment_pair_id != -1)
-    {
-        assignment_t *item2 = &g_assignments_list[assignment.device_id][assignment.assignment_pair_id];
-
-        item2->effect_id = effect_id;
-        item2->port = port;
-        item2->device_id = device_id;
-        item2->actuator_id = assignment.actuator_pair_id;
-        item2->assignment_id = assignment.assignment_pair_id;
-        item2->actuator_pair_id = actuator_id;
-        item2->assignment_pair_id = assignment_id;
-        item2->supports_set_value = item->supports_set_value;
-    }
-
-    if (g_verbose_debug) {
-        printf("DEBUG: cc_map assignment supports set_value: %s, has pair %i\n",
-               item->supports_set_value ? "true" : "false", assignment.assignment_pair_id);
-        fflush(stdout);
-    }
-
-    return SUCCESS;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-    UNUSED_PARAM(device_id);
-    UNUSED_PARAM(actuator_id);
-    UNUSED_PARAM(label);
-    UNUSED_PARAM(value);
-    UNUSED_PARAM(minimum);
-    UNUSED_PARAM(maximum);
-    UNUSED_PARAM(steps);
-    UNUSED_PARAM(extraflags);
-    UNUSED_PARAM(unit);
-    UNUSED_PARAM(scalepoints_count);
-    UNUSED_PARAM(scalepoints);
-#endif
-}
-
-int effects_cc_value_set(int effect_id, const char *control_symbol, float value)
-{
-#ifdef HAVE_CONTROLCHAIN
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            assignment_t *assignment = &g_assignments_list[i][j];
-
-            if (assignment->effect_id == ASSIGNMENT_NULL)
-                break;
-
-            if (assignment->effect_id == effect_id && assignment->port != NULL &&
-                strcmp(assignment->port->symbol, control_symbol) == 0)
-            {
-                if (! assignment->supports_set_value)
-                    return ERR_INVALID_OPERATION;
-
-                // invert value for bypass
-                if (!strcmp(control_symbol, BYPASS_PORT_SYMBOL))
-                    value = value > 0.5f ? 0.0f : 1.0f;
-
-                if (g_verbose_debug) {
-                    puts("DEBUG: cc_value_set sending:");
-                    printf("\tdevice_id:         %i\n", assignment->device_id);
-                    printf("\tassignment_id:     %i\n", assignment->assignment_id);
-                    printf("\assignment_pair_id: %i\n", assignment->assignment_pair_id);
-                    printf("\tactuator_id:       %i\n", assignment->actuator_id);
-                    printf("\tvalue:             %f\n", value);
-                    fflush(stdout);
-                }
-
-                cc_set_value_t update = {0};
-                update.device_id = assignment->device_id;
-                update.assignment_id = assignment->assignment_id;
-                update.actuator_id = assignment->actuator_id;
-                update.value = value;
-
-                cc_client_value_set(g_cc_client, &update);
-                return SUCCESS;
-            }
-        }
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_value_set failed");
-        fflush(stdout);
-    }
-
-    return ERR_ASSIGNMENT_INVALID_OP;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-    UNUSED_PARAM(value);
-#endif
-}
-
-int effects_cc_unmap(int effect_id, const char *control_symbol)
-{
-#ifdef HAVE_CONTROLCHAIN
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (!g_cc_client)
-        return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    for (int i = 0; i < CC_MAX_DEVICES; i++)
-    {
-        for (int j = 0; j < CC_MAX_ASSIGNMENTS; j++)
-        {
-            assignment_t *assignment = &g_assignments_list[i][j];
-
-            if (assignment->effect_id == ASSIGNMENT_NULL)
-                break;
-
-            if (assignment->effect_id == effect_id && assignment->port != NULL &&
-                strcmp(assignment->port->symbol, control_symbol) == 0)
-            {
-                cc_assignment_key_t key = {0};
-                key.id = assignment->assignment_id;
-                key.device_id = assignment->device_id;
-                key.pair_id = assignment->assignment_pair_id;
-
-                mod_memset(assignment, 0, sizeof(assignment_t));
-                assignment->effect_id = ASSIGNMENT_UNUSED;
-                assignment->assignment_pair_id = -1;
-
-                if (key.pair_id != -1)
-                {
-                    assignment = &g_assignments_list[i][key.pair_id];
-                    mod_memset(assignment, 0, sizeof(assignment_t));
-                    assignment->effect_id = ASSIGNMENT_UNUSED;
-                    assignment->assignment_pair_id = -1;
-                }
-
-                if (g_verbose_debug) {
-                    puts("DEBUG: cc_unmap sending:");
-                    printf("\tdevice_id: %i\n", key.device_id);
-                    printf("\tid:        %i\n", key.id);
-                    printf("\tpair_id:   %i\n", key.pair_id);
-                    fflush(stdout);
-                }
-
-                cc_client_unassignment(g_cc_client, &key);
-                return SUCCESS;
-            }
-        }
-    }
-
-    if (g_verbose_debug) {
-        puts("DEBUG: cc_unmap failed");
-        fflush(stdout);
-    }
-
-    return ERR_ASSIGNMENT_INVALID_OP;
-#else
-    return ERR_CONTROL_CHAIN_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-#endif
-}
-
 int effects_cv_map(int effect_id, const char *control_symbol, const char *source_port_name, float minimum, float maximum, const char* mode)
 {
     if (!InstanceExist(effect_id))
@@ -8711,7 +7501,7 @@ int effects_cv_map(int effect_id, const char *control_symbol, const char *source
                 const char *source_symbol = NULL;
                 int source_effect_id = -1;
 
-                mod_memset(effect_str, 0, sizeof(effect_str));
+                memset(effect_str, 0, sizeof(effect_str));
                 strncpy(effect_str, source_port_name+7, 5);
 
                 for (int i=1; i<6; ++i) {
@@ -8864,158 +7654,6 @@ int effects_cv_unmap(int effect_id, const char *control_symbol)
     return SUCCESS;
 }
 
-int effects_hmi_map(int effect_id, const char *control_symbol, int hw_id, int page, int subpage,
-                    int caps, int flags, const char *label, float minimum, float maximum, int steps)
-{
-#ifdef MOD_HMI_CONTROL_ENABLED
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-    if (effect_id >= MAX_PLUGIN_INSTANCES)
-        return ERR_ASSIGNMENT_INVALID_OP;
-    if (page < 0 || page > 0xff)
-        return ERR_ASSIGNMENT_INVALID_OP;
-    if (subpage < 0 || subpage > 0xff)
-        return ERR_ASSIGNMENT_INVALID_OP;
-
-    effect_t *effect = &(g_effects[effect_id]);
-
-    if (effect->hmi_notif == NULL)
-        return ERR_ASSIGNMENT_UNUSED;
-
-    port_t *port = NULL;
-
-    // special handling for bypass, mapped to lv2:enabled designation
-    if (!strcmp(control_symbol, g_bypass_port_symbol))
-    {
-        if (effect->enabled_index >= 0)
-            port = effect->ports[effect->enabled_index];
-    }
-    // do not allow other special ports
-    else if (control_symbol[0] != ':')
-    {
-        port = FindEffectInputPortBySymbol(effect, control_symbol);
-    }
-
-    if (port == NULL)
-        return ERR_LV2_INVALID_PARAM_SYMBOL;
-
-    // check if already addressed
-    if (port->hmi_addressing != NULL)
-        return port->hmi_addressing->actuator_id == hw_id ? ERR_ASSIGNMENT_ALREADY_EXISTS
-                                                          : ERR_ASSIGNMENT_FAILED;
-
-    // find unused hmi addressing
-    hmi_addressing_t *addressing;
-
-    for (int i = 0; i < MAX_HMI_ADDRESSINGS;)
-    {
-        addressing = &g_hmi_addressings[i];
-
-        if (addressing->actuator_id != -1)
-        {
-            if (++i == MAX_HMI_ADDRESSINGS)
-                addressing = NULL;
-            continue;
-        }
-
-        addressing->actuator_id = hw_id;
-        addressing->page = page;
-        addressing->subpage = subpage;
-        break;
-    }
-
-    if (addressing == NULL)
-        return ERR_ASSIGNMENT_LIST_FULL;
-
-    const LV2_HMI_AddressingInfo info = {
-        .caps = (LV2_HMI_AddressingCapabilities)caps,
-        .flags = (LV2_HMI_AddressingFlags)flags,
-        .label = label,
-        .min = minimum,
-        .max = maximum,
-        .steps = steps,
-    };
-    port->hmi_addressing = addressing;
-    effect->hmi_notif->addressed(lilv_instance_get_handle(effect->lilv_instance),
-                                 port->index, (LV2_HMI_Addressing)addressing, &info);
-
-    return SUCCESS;
-#else
-    return ERR_HMI_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-    UNUSED_PARAM(hw_id);
-    UNUSED_PARAM(page);
-    UNUSED_PARAM(subpage);
-    UNUSED_PARAM(caps);
-    UNUSED_PARAM(flags);
-    UNUSED_PARAM(label);
-    UNUSED_PARAM(minimum);
-    UNUSED_PARAM(maximum);
-    UNUSED_PARAM(steps);
-#endif
-}
-
-int effects_hmi_unmap(int effect_id, const char *control_symbol)
-{
-#ifdef MOD_HMI_CONTROL_ENABLED
-    if (!InstanceExist(effect_id))
-        return ERR_INSTANCE_NON_EXISTS;
-
-    effect_t *effect = &(g_effects[effect_id]);
-
-    if (effect->hmi_notif == NULL)
-        return ERR_INVALID_OPERATION;
-
-    port_t *port = NULL;
-
-    // special handling for bypass, mapped to lv2:enabled designation
-    if (!strcmp(control_symbol, g_bypass_port_symbol))
-    {
-        if (effect->enabled_index >= 0)
-            port = effect->ports[effect->enabled_index];
-    }
-    // do not allow other special ports
-    else if (control_symbol[0] != ':')
-    {
-        port = FindEffectInputPortBySymbol(effect, control_symbol);
-    }
-
-    if (port == NULL)
-        return ERR_LV2_INVALID_PARAM_SYMBOL;
-
-    effect->hmi_notif->unaddressed(lilv_instance_get_handle(effect->lilv_instance), port->index);
-
-    if (port->hmi_addressing != NULL)
-    {
-        if (g_hmi_data != NULL)
-        {
-            char msg[24];
-            snprintf(msg, sizeof(msg), "%i", port->hmi_addressing->actuator_id);
-            msg[sizeof(msg)-1] = '\0';
-
-            pthread_mutex_lock(&g_hmi_mutex);
-            sys_serial_write(&g_hmi_data->server,
-                             sys_serial_event_type_unassign,
-                             port->hmi_addressing->page,
-                             port->hmi_addressing->subpage, msg);
-            pthread_mutex_unlock(&g_hmi_mutex);
-        }
-
-        port->hmi_addressing->actuator_id = -1;
-        port->hmi_addressing = NULL;
-    }
-
-    return SUCCESS;
-#else
-    return ERR_HMI_UNAVAILABLE;
-
-    UNUSED_PARAM(effect_id);
-    UNUSED_PARAM(control_symbol);
-#endif
-}
-
 float effects_jack_cpu_load(void)
 {
     return jack_cpu_load(g_jack_global_client);
@@ -9139,9 +7777,6 @@ int effects_state_load(const char *dir)
         &g_urid_map_feature,
         &g_urid_unmap_feature,
         &g_options_feature,
-#ifdef MOD_HMI_CONTROL_ENABLED
-        &g_hmi_wc_feature,
-#endif
         &g_license_feature,
         &g_buf_size_features[0],
         &g_buf_size_features[1],
@@ -9234,9 +7869,6 @@ int effects_state_save(const char *dir)
         &g_urid_map_feature,
         &g_urid_unmap_feature,
         &g_options_feature,
-#ifdef MOD_HMI_CONTROL_ENABLED
-        &g_hmi_wc_feature,
-#endif
         &g_license_feature,
         &g_buf_size_features[0],
         &g_buf_size_features[1],

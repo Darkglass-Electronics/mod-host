@@ -95,7 +95,6 @@ typedef enum {
 #define MAX_INSTANCES           (MAX_PLUGIN_INSTANCES + MAX_TOOL_INSTANCES)
 #define MAX_MIDI_CC_ASSIGN      1024
 #define MAX_POSTPONED_EVENTS    8192
-#define MAX_HMI_ADDRESSINGS     128
 
 #define MAX_SYNC_SCHEDULED_PARAMS 512
 
@@ -164,7 +163,6 @@ int effects_pre_run(int effect_id, int reset, int param_count, const flushed_par
 int effects_pre_run_multi(int reset, int param_count, const flushed_param_t *params, int num_effects, int *effects);
 int effects_set_property(int effect_id, const char *uri, const char *value);
 int effects_get_property(int effect_id, const char *uri);
-int effects_monitor_parameter(int effect_id, const char *control_symbol, const char *op, float value);
 int effects_monitor_output_parameter(int effect_id, const char *control_symbol, int enable);
 int effects_bypass(int effect_id, int value);
 int effects_bypass_multi(int value, int num_effects, int *effects);
@@ -177,19 +175,6 @@ int effects_midi_unmap(int effect_id, const char *control_symbol);
 int effects_licensee(int effect_id, char **licensee);
 int effects_set_beats_per_minute(double bpm);
 int effects_set_beats_per_bar(float bpb);
-
-int effects_cc_map(int effect_id, const char *control_symbol, int device_id, int actuator_id,
-                   const char* label, float value, float minimum, float maximum, int steps, int extraflags,
-                   const char *unit, int scalepoints_count, const scalepoint_t *scalepoints);
-int effects_cc_value_set(int effect_id, const char *control_symbol, float value);
-int effects_cc_unmap(int effect_id, const char *control_symbol);
-
-int effects_cv_map(int effect_id, const char *control_symbol, const char *source_port_name, float minimum, float maximum, const char* mode);
-int effects_cv_unmap(int effect_id, const char *control_symbol);
-
-int effects_hmi_map(int effect_id, const char *control_symbol, int hw_id, int page, int subpage,
-                    int caps, int flags, const char *label, float minimum, float maximum, int steps);
-int effects_hmi_unmap(int effect_id, const char *control_symbol);
 
 float effects_jack_cpu_load(void);
 float effects_jack_max_cpu_load(void);

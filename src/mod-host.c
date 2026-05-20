@@ -62,10 +62,6 @@
 
 #if defined(_MOD_DEVICE_RK358x)
 #include <sys/resource.h>
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-#include <sys/resource.h>
-#include <syscall.h>
-#include <unistd.h>
 #endif
 
 #include "mod-host.h"
@@ -73,7 +69,6 @@
 #include "socket.h"
 #include "protocol.h"
 #include "completer.h"
-#include "monitor.h"
 #include "monitor/monitor-client.h"
 #include "zix/thread.h"
 #include "info.h"
@@ -268,18 +263,6 @@ static void effects_get_param_cb(proto_t *proto)
     protocol_response(buffer, proto);
 }
 
-static void effects_monitor_param_cb(proto_t *proto)
-{
-    int resp;
-    if (monitor_status())
-        resp = effects_monitor_parameter(atoi(proto->list[1]), proto->list[2],
-                                         proto->list[3], atof(proto->list[4]));
-    else
-        resp = -1;
-
-    protocol_response_int(resp, proto);
-}
-
 static void effects_flush_params_cb(proto_t *proto)
 {
     int resp;
@@ -399,17 +382,6 @@ static void effects_set_beats_per_bar_cb(proto_t *proto)
     protocol_response_int(resp, proto);
 }
 
-static void monitor_addr_set_cb(proto_t *proto)
-{
-    int resp;
-    if (atoi(proto->list[3]) == 1)
-        resp = monitor_start(proto->list[1], atoi(proto->list[2]));
-    else
-        resp = monitor_stop();
-
-    protocol_response_int(resp, proto);
-}
-
 static void monitor_output_cb(proto_t *proto)
 {
     int resp;
@@ -493,117 +465,6 @@ static void midi_unmap_cb(proto_t *proto)
 {
     int resp;
     resp = !effects_midi_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
-static void cc_map_cb(proto_t *proto)
-{
-    int resp;
-    int scalepoints_count = atoi(proto->list[12]);
-    scalepoint_t *scalepoints;
-
-    if (scalepoints_count != 0 && (scalepoints_count == 1 || proto->list_count < (uint32_t)(13+2*scalepoints_count)))
-    {
-        protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
-        return;
-    }
-
-    if (scalepoints_count >= 2)
-    {
-        scalepoints = malloc(sizeof(scalepoint_t)*scalepoints_count);
-
-        if (scalepoints != NULL)
-        {
-            for (int i = 0; i < scalepoints_count; i++)
-            {
-                scalepoints[i].label = proto->list[13+i*2];
-                scalepoints[i].value = atof(proto->list[13+i*2+1]);
-            }
-        }
-        else
-        {
-            protocol_response_int(ERR_MEMORY_ALLOCATION, proto);
-            return;
-        }
-    }
-    else
-    {
-        scalepoints_count = 0;
-        scalepoints = NULL;
-    }
-
-    resp = effects_cc_map(atoi(proto->list[1]),  // effect_id
-                               proto->list[2],   // control_symbol
-                          atoi(proto->list[3]),  // device_id
-                          atoi(proto->list[4]),  // actuator_id
-                               proto->list[5],   // label
-                          atof(proto->list[6]),  // value
-                          atof(proto->list[7]),  // minimum
-                          atof(proto->list[8]),  // maximum
-                          atoi(proto->list[9]),  // steps
-                          atoi(proto->list[10]), // extraflags
-                               proto->list[11],  // unit
-                          scalepoints_count, scalepoints);
-
-    free(scalepoints);
-
-    protocol_response_int(resp, proto);
-}
-
-static void cc_value_set_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cc_value_set(atoi(proto->list[1]), proto->list[2], atof(proto->list[3]));
-    protocol_response_int(resp, proto);
-}
-
-static void cc_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cc_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
-static void cv_map_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cv_map(atoi(proto->list[1]), // effect_id
-                               proto->list[2],  // control_symbol
-                               proto->list[3],  // origin_port_name
-                          atof(proto->list[4]), // minimum
-                          atof(proto->list[5]), // maximum
-                               proto->list[6]); // op_mode
-    protocol_response_int(resp, proto);
-}
-
-static void cv_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_cv_unmap(atoi(proto->list[1]), proto->list[2]);
-    protocol_response_int(resp, proto);
-}
-
-static void hmi_map_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_hmi_map(atoi(proto->list[ 1]),  // effect_id
-                                proto->list[ 2],   // control_symbol
-                           atoi(proto->list[ 3]),  // hw_id
-                           atoi(proto->list[ 4]),  // page
-                           atoi(proto->list[ 5]),  // subpage
-                           atoi(proto->list[ 6]),  // caps
-                           atof(proto->list[ 7]),  // flags
-                                proto->list[ 8],   // label
-                           atof(proto->list[ 9]),  // min
-                           atof(proto->list[10]),  // max
-                           atoi(proto->list[11])); // steps
-    protocol_response_int(resp, proto);
-}
-
-static void hmi_unmap_cb(proto_t *proto)
-{
-    int resp;
-    resp = effects_hmi_unmap(atoi(proto->list[1]), proto->list[2]);
     protocol_response_int(resp, proto);
 }
 
@@ -1173,7 +1034,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(EFFECT_BYPASS, effects_bypass_cb);
     protocol_add_command(EFFECT_PARAM_SET, effects_set_param_cb);
     protocol_add_command(EFFECT_PARAM_GET, effects_get_param_cb);
-    protocol_add_command(EFFECT_PARAM_MON, effects_monitor_param_cb);
     protocol_add_command(EFFECT_PARAMS_FLUSH, effects_flush_params_cb);
     protocol_add_command(EFFECT_PRE_RUN, effects_pre_run_cb);
     protocol_add_command(EFFECT_PATCH_GET, effects_get_property_cb);
@@ -1181,7 +1041,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(EFFECT_LICENSEE, effects_licensee_cb);
     protocol_add_command(EFFECT_SET_BPM, effects_set_beats_per_minute_cb);
     protocol_add_command(EFFECT_SET_BPB, effects_set_beats_per_bar_cb);
-    protocol_add_command(MONITOR_ADDR_SET, monitor_addr_set_cb);
     protocol_add_command(MONITOR_OUTPUT, monitor_output_cb);
     protocol_add_command(MONITOR_OUTPUT_OFF, monitor_output_off_cb);
     protocol_add_command(MONITOR_AUDIO_LEVELS, monitor_audio_levels_cb);
@@ -1191,13 +1050,6 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(MIDI_LEARN, midi_learn_cb);
     protocol_add_command(MIDI_MAP, midi_map_cb);
     protocol_add_command(MIDI_UNMAP, midi_unmap_cb);
-    protocol_add_command(CC_MAP, cc_map_cb);
-    protocol_add_command(CC_VALUE_SET, cc_value_set_cb);
-    protocol_add_command(CC_UNMAP, cc_unmap_cb);
-    protocol_add_command(CV_MAP, cv_map_cb);
-    protocol_add_command(CV_UNMAP, cv_unmap_cb);
-    protocol_add_command(HMI_MAP, hmi_map_cb);
-    protocol_add_command(HMI_UNMAP, hmi_unmap_cb);
     protocol_add_command(CPU_LOAD, cpu_load_cb);
     protocol_add_command(MAX_CPU_LOAD, max_cpu_load_cb);
 #ifndef SKIP_READLINE
@@ -1248,10 +1100,6 @@ static void* intclient_socket_run(void* ptr)
 {
 #if defined(_MOD_DEVICE_RK358x)
     setpriority(PRIO_PROCESS, gettid(), -19);
-#elif defined(_MOD_DEVICE_DUO) || defined(_MOD_DEVICE_DUOX) || defined(_MOD_DEVICE_DWARF)
-    const pid_t tid = syscall(SYS_gettid);
-    if (tid > 0)
-        setpriority(PRIO_PROCESS, tid, -19);
 #endif
 
     while (running)

@@ -177,10 +177,6 @@ The commands supported by mod-host are:
         * get the value of a control port
         e.g.: param_get 0 "gain"
 
-    param_monitor <instance_number> <param_symbol> <cond_op> <value>
-        * monitor a control port according to a condition
-        e.g: param_monitor 0 "gain" ">" 2.5
-
     params_flush <instance_number> <reset_value> <param_count> <params...>
         * flush several param values at once and trigger reset if available
         * reset value must be according to reset property spec
@@ -203,12 +199,6 @@ The commands supported by mod-host are:
     licensee <instance_number>
         * get the licensee name for a commercial plugin
         e.g.: licensee 0
-
-    monitor <addr> <port> <status>
-        * open a socket port for monitoring parameter changes
-        e.g: monitor localhost 12345 1
-        if status = 1 start monitoring
-        if status = 0 stop monitoring
 
     monitor_output <instance_number> <param_symbol>
         * request monitoring of an output control port (on the feedback port)
@@ -246,26 +236,6 @@ The commands supported by mod-host are:
     monitor_midi_program <midi_channel> <enable>
         * listen to MIDI program change messages (on the feedback port)
         e.g.: monitor_midi_program 0 1
-
-    cc_map <instance_number> <param_symbol> <device_id> <actuator_id> <label> <value> <minimum> <maximum> <steps> <extraflags> <unit> <scalepoints_count> <scalepoints...>
-        * map a Control Chain actuator to a control port
-        e.g.: cc_map 0 "gain" 0 1 "Gain" 0.0 -24.0 3.0 33 0 "dB" 0
-
-    cc_unmap <instance_number> <param_symbol>
-        * unmap the Control Chain actuator from a control port
-        e.g.: cc_unmap 0 "gain"
-
-    cc_value_set <instance_number> <param_symbol> <value>
-        * set the value of a  mapped Control Chain actuator
-        e.g.: cc_value_set 0 "gain" 2.5
-
-    cv_map <instance_number> <param_symbol> <source_port_name> <minimum> <maximum> <operational-mode>
-        * map a CV source port to a control port, operational-mode being one of '-', '+', 'b' or '='
-        e.g.: cv_map 0 "gain" "AMS CV Source:CV Out 1" -24.0 3.0 =
-
-    cv_unmap <instance_number> <param_symbol>
-        * unmap the CV source port actuator from a control port
-        e.g.: cv_unmap 0 "gain"
 
     cpu_load
         * return current average jack cpu load
