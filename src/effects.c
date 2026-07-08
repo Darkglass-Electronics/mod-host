@@ -164,6 +164,10 @@ typedef struct {
 #include "rtmempool/rtmempool.h"
 #include "filter.h"
 
+// TODO check size here. Also check stack allocation later.
+#define MIDI_OUT_MAX_MSG 8192
+static jack_ringbuffer_t* g_midi_out_rb = NULL;
+
 /*
 ************************************************************************************************************************
 *           LOCAL DEFINES
@@ -740,6 +744,7 @@ static audio_monitor_t *g_audio_monitors;
 static pthread_mutex_t g_audio_monitor_mutex;
 static int g_audio_monitor_count;
 static jack_port_t *g_midi_in_port;
+static jack_port_t *g_midi_out_port;
 static jack_position_t g_jack_pos;
 static bool g_jack_rolling;
 static uint32_t g_jack_xruns;
@@ -2723,6 +2728,38 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
     }
 #endif
 
+    if (g_midi_out_rb != NULL)
+    {
+        void* const out_buf = jack_port_get_buffer(g_midi_out_port, nframes);
+        jack_midi_clear_buffer(out_buf);
+
+        for (;;)
+        {
+            uint16_t len;
+            if (jack_ringbuffer_read_space(g_midi_out_rb) < sizeof(len))
+                break;
+            jack_ringbuffer_peek(g_midi_out_rb, (char*)&len, sizeof(len));
+
+            if (len == 0 || len > MIDI_OUT_MAX_MSG)
+            {
+                jack_ringbuffer_read_advance(g_midi_out_rb,
+                                             jack_ringbuffer_read_space(g_midi_out_rb));
+                break;
+            }
+
+            if (jack_ringbuffer_read_space(g_midi_out_rb) < sizeof(len) + len)
+                break;
+
+            jack_ringbuffer_read_advance(g_midi_out_rb, sizeof(len));
+
+            jack_midi_data_t* ev = jack_midi_event_reserve(out_buf, 0, len);
+            if (ev != NULL)
+                jack_ringbuffer_read(g_midi_out_rb, (char*)ev, len);
+            else
+                jack_ringbuffer_read_advance(g_midi_out_rb, len);
+        }
+    }
+
     // Handle input MIDI events
     void *const port_buf = jack_port_get_buffer(g_midi_in_port, nframes);
     const jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
@@ -3899,6 +3936,25 @@ static void ExternalControllerWriteFunction(LV2UI_Controller controller,
 ************************************************************************************************************************
 */
 
+int midi_send_msg_out(const uint8_t* bytes, uint16_t len)
+{
+    if (g_midi_out_rb == NULL || len == 0 || len > MIDI_OUT_MAX_MSG)
+        return 1;
+
+    const size_t need = sizeof(len) + len;
+    if (jack_ringbuffer_write_space(g_midi_out_rb) < need)
+        return 1;  // not enough room for the full message, drop it whole
+
+    char msg[sizeof(len) + MIDI_OUT_MAX_MSG];
+
+    memcpy(msg, &len, sizeof(len));
+    memcpy(msg + sizeof(len), bytes, len);
+
+    jack_ringbuffer_write(g_midi_out_rb, msg, need);
+
+    return 0;
+}
+
 int effects_init(void* client)
 {
     /* This global client is for connections / disconnections and midi-learn */
@@ -3928,6 +3984,27 @@ int effects_init(void* client)
             jack_client_close(g_jack_global_client);
         return ERR_JACK_PORT_REGISTER;
     }
+
+    g_midi_out_port = jack_port_register(g_jack_global_client, "midi_out",
+                                         JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+    if (! g_midi_out_port)
+    {
+        fprintf(stderr, "can't register global jack midi-out port\n");
+        if (client == NULL)
+            jack_client_close(g_jack_global_client);
+        return ERR_JACK_PORT_REGISTER;
+    }
+
+    g_midi_out_rb = jack_ringbuffer_create(4 * (MIDI_OUT_MAX_MSG + sizeof(uint16_t)));
+    if (g_midi_out_rb == NULL)
+    {
+        fprintf(stderr, "can't create global jack midi-out ringbuffer\n");
+        if (client == NULL)
+            jack_client_close(g_jack_global_client);
+        return ERR_JACK_PORT_REGISTER;  // TODO more specific error code?
+    }
+
+    jack_ringbuffer_mlock(g_midi_out_rb);
 
     if (g_jack_global_client != NULL && strcmp(jack_get_client_name(g_jack_global_client), "mod-host") == 0 && ! monitor_client_init())
     {

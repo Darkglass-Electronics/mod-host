@@ -46,6 +46,8 @@
 #include <readline/history.h>
 #endif
 
+#define MIDI_OUT_MAX_MSG 8192
+
 #ifdef HAVE_FFTW335
 #include <fftw3.h>
 #endif
@@ -442,6 +444,34 @@ static void monitor_midi_program_cb(proto_t *proto)
 {
     int resp;
     resp = effects_monitor_midi_program(atoi(proto->list[1]), atoi(proto->list[2]));
+    protocol_response_int(resp, proto);
+}
+
+static void midi_send_msg_out_cb(proto_t *proto)
+{
+    static uint8_t bytes[MIDI_OUT_MAX_MSG];
+    int resp;
+    unsigned int len_arg;
+    uint16_t len;
+    unsigned int i;
+
+    len_arg = (unsigned int)atoi(proto->list[1]);
+    if (len_arg == 0 || len_arg > MIDI_OUT_MAX_MSG) {
+        protocol_response_int(0, proto);
+        return;
+    }
+    len = (uint16_t)len_arg;
+
+    if (proto->list_count < (uint32_t)len + 2) {
+        protocol_response_int(0, proto);
+        return;
+    }
+
+    for (i = 0; i < len; i++)
+        bytes[i] = (uint8_t)strtol(proto->list[i + 2], NULL, 0);
+
+    resp = !midi_send_msg_out(bytes, len);
+
     protocol_response_int(resp, proto);
 }
 
@@ -1047,6 +1077,7 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(MONITOR_CPU_LOAD, monitor_cpu_load_cb);
     protocol_add_command(MONITOR_MIDI_CONTROL, monitor_midi_control_cb);
     protocol_add_command(MONITOR_MIDI_PROGRAM, monitor_midi_program_cb);
+    protocol_add_command(MIDI_MSG_OUT, midi_send_msg_out_cb);
     protocol_add_command(MIDI_LEARN, midi_learn_cb);
     protocol_add_command(MIDI_MAP, midi_map_cb);
     protocol_add_command(MIDI_UNMAP, midi_unmap_cb);

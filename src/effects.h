@@ -192,6 +192,7 @@ int effects_monitor_cpu_load(int enable, int num_effects, int *effects);
 int effects_monitor_midi_control(int channel, int enable);
 int effects_monitor_midi_program(int channel, int enable);
 void effects_transport(int rolling, double beats_per_bar, double beats_per_minute);
+int midi_send_msg_out(const uint8_t* bytes, uint16_t len);
 int effects_transport_sync_mode(const char *mode);
 void effect_sync_scheduled_params(int realtime);
 void effects_output_data_ready(void);
