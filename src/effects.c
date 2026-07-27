@@ -4440,6 +4440,13 @@ int effects_init(void* client)
         ConnectToAllHardwareMIDIPorts();
     }
 
+    bool g_broadcaster_midi_available = jack_port_by_name(g_jack_global_client, "mod-midi-broadcaster:in") != NULL;
+
+    if (g_broadcaster_midi_available) {
+        const char *midi_out_port_name = jack_port_name(g_midi_in_port);
+        jack_connect(g_jack_global_client, midi_out_port_name, "mod-midi-broadcaster:in");
+    }
+
     g_processing_enabled = true;
 
     return SUCCESS;
