@@ -4445,6 +4445,11 @@ int effects_init(void* client)
     if (g_broadcaster_midi_available) {
         const char *midi_out_port_name = jack_port_name(g_midi_in_port);
         jack_connect(g_jack_global_client, midi_out_port_name, "mod-midi-broadcaster:in");
+        int rc = jack_connect(g_jack_global_client, midi_out_port_name, "mod-midi-broadcaster:in");
+        if (rc != 0 && rc != EEXIST) {
+            fprintf(stderr, "jack_connect %s -> mod-midi-broadcaster:in failed: %d\n",
+                midi_out_port_name, rc);
+        }
     }
 
     g_processing_enabled = true;
