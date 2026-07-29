@@ -46,8 +46,6 @@
 #include <readline/history.h>
 #endif
 
-#define MIDI_OUT_MAX_MSG 8192
-
 #ifdef HAVE_FFTW335
 #include <fftw3.h>
 #endif
@@ -449,14 +447,14 @@ static void monitor_midi_program_cb(proto_t *proto)
 
 static void midi_send_msg_out_cb(proto_t *proto)
 {
-    static uint8_t bytes[MIDI_OUT_MAX_MSG];
+    static uint8_t bytes[MAX_MIDI_OUT_MSG_SIZE];
     int resp;
     unsigned int len_arg;
     uint16_t len;
     unsigned int i;
 
     len_arg = (unsigned int)atoi(proto->list[1]);
-    if (len_arg == 0 || len_arg > MIDI_OUT_MAX_MSG) {
+    if (len_arg == 0 || len_arg > MAX_MIDI_OUT_MSG_SIZE) {
         protocol_response_int(0, proto);
         return;
     }

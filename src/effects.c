@@ -164,8 +164,6 @@ typedef struct {
 #include "rtmempool/rtmempool.h"
 #include "filter.h"
 
-// TODO check size here. Also check stack allocation later.
-#define MIDI_OUT_MAX_MSG 8192
 static jack_ringbuffer_t* g_midi_out_rb = NULL;
 
 /*
@@ -2740,7 +2738,7 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
                 break;
             jack_ringbuffer_peek(g_midi_out_rb, (char*)&len, sizeof(len));
 
-            if (len == 0 || len > MIDI_OUT_MAX_MSG)
+            if (len == 0 || len > MAX_MIDI_OUT_MSG_SIZE)
             {
                 jack_ringbuffer_read_advance(g_midi_out_rb,
                                              jack_ringbuffer_read_space(g_midi_out_rb));
@@ -3938,14 +3936,14 @@ static void ExternalControllerWriteFunction(LV2UI_Controller controller,
 
 int midi_send_msg_out(const uint8_t* bytes, uint16_t len)
 {
-    if (g_midi_out_rb == NULL || len == 0 || len > MIDI_OUT_MAX_MSG)
+    if (g_midi_out_rb == NULL || len == 0 || len > MAX_MIDI_OUT_MSG_SIZE)
         return 1;
 
     const size_t need = sizeof(len) + len;
     if (jack_ringbuffer_write_space(g_midi_out_rb) < need)
         return 1;  // not enough room for the full message, drop it whole
 
-    char msg[sizeof(len) + MIDI_OUT_MAX_MSG];
+    char msg[sizeof(len) + MAX_MIDI_OUT_MSG_SIZE];
 
     memcpy(msg, &len, sizeof(len));
     memcpy(msg + sizeof(len), bytes, len);
@@ -3995,7 +3993,7 @@ int effects_init(void* client)
         return ERR_JACK_PORT_REGISTER;
     }
 
-    g_midi_out_rb = jack_ringbuffer_create(4 * (MIDI_OUT_MAX_MSG + sizeof(uint16_t)));
+    g_midi_out_rb = jack_ringbuffer_create(4 * (MAX_MIDI_OUT_MSG_SIZE + sizeof(uint16_t)));
     if (g_midi_out_rb == NULL)
     {
         fprintf(stderr, "can't create global jack midi-out ringbuffer\n");

@@ -96,6 +96,8 @@ typedef enum {
 #define MAX_MIDI_CC_ASSIGN      1024
 #define MAX_POSTPONED_EVENTS    8192
 
+#define MAX_MIDI_OUT_MSG_SIZE 8192
+
 #define MAX_SYNC_SCHEDULED_PARAMS 512
 
 // used for local stack variables
