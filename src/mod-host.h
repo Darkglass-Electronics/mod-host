@@ -82,7 +82,7 @@
 #define MONITOR_MIDI_CONTROL    "monitor_midi_control %i %i"
 #define MONITOR_MIDI_PROGRAM    "monitor_midi_program %i %i"
 #define MIDI_LEARN              "midi_learn %i %s %f %f"
-#define MIDI_MSG_OUT            "midi_msg_out %i %i ..."
+#define MIDI_OUT                "midi_out %i %i ..."
 #define MIDI_MAP                "midi_map %i %s %i %i %f %f"
 #define MIDI_UNMAP              "midi_unmap %i %s"
 #define CPU_LOAD                "cpu_load"

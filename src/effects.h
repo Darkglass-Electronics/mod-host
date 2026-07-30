@@ -32,6 +32,8 @@
 ************************************************************************************************************************
 */
 
+#include <stdint.h>
+
 
 /*
 ************************************************************************************************************************
@@ -95,8 +97,6 @@ typedef enum {
 #define MAX_INSTANCES           (MAX_PLUGIN_INSTANCES + MAX_TOOL_INSTANCES)
 #define MAX_MIDI_CC_ASSIGN      1024
 #define MAX_POSTPONED_EVENTS    8192
-
-#define MAX_MIDI_OUT_MSG_SIZE 8192
 
 #define MAX_SYNC_SCHEDULED_PARAMS 512
 
@@ -193,8 +193,8 @@ int effects_monitor_audio_levels(const char *source_port_name, int enable);
 int effects_monitor_cpu_load(int enable, int num_effects, int *effects);
 int effects_monitor_midi_control(int channel, int enable);
 int effects_monitor_midi_program(int channel, int enable);
+int effects_midi_out(const uint8_t *data, uint8_t size);
 void effects_transport(int rolling, double beats_per_bar, double beats_per_minute);
-int midi_send_msg_out(const uint8_t* bytes, uint16_t len);
 int effects_transport_sync_mode(const char *mode);
 void effect_sync_scheduled_params(int realtime);
 void effects_output_data_ready(void);

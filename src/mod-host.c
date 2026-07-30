@@ -406,7 +406,7 @@ static void monitor_audio_levels_cb(proto_t *proto)
 static void monitor_cpu_load_cb(proto_t *proto)
 {
     int instance_count = atoi(proto->list[2]);
-    if (instance_count == 0)
+    if (instance_count <= 0)
     {
         protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
         return;
@@ -445,31 +445,21 @@ static void monitor_midi_program_cb(proto_t *proto)
     protocol_response_int(resp, proto);
 }
 
-static void midi_send_msg_out_cb(proto_t *proto)
+static void midi_out_cb(proto_t *proto)
 {
-    static uint8_t bytes[MAX_MIDI_OUT_MSG_SIZE];
-    int resp;
-    unsigned int len_arg;
-    uint16_t len;
-    unsigned int i;
+    uint8_t data[UINT8_MAX];
 
-    len_arg = (unsigned int)atoi(proto->list[1]);
-    if (len_arg == 0 || len_arg > MAX_MIDI_OUT_MSG_SIZE) {
-        protocol_response_int(0, proto);
-        return;
-    }
-    len = (uint16_t)len_arg;
-
-    if (proto->list_count < (uint32_t)len + 2) {
-        protocol_response_int(0, proto);
+    int size = atoi(proto->list[1]);
+    if (size <= 0 || size > UINT8_MAX)
+    {
+        protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
         return;
     }
 
-    for (i = 0; i < len; i++)
-        bytes[i] = (uint8_t)strtol(proto->list[i + 2], NULL, 0);
+    for (int i = 0; i < size; i++)
+        data[i] = (uint8_t)atoi(proto->list[i + 2]);
 
-    resp = !midi_send_msg_out(bytes, len);
-
+    int resp = effects_midi_out(data, size);
     protocol_response_int(resp, proto);
 }
 
@@ -1075,7 +1065,7 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(MONITOR_CPU_LOAD, monitor_cpu_load_cb);
     protocol_add_command(MONITOR_MIDI_CONTROL, monitor_midi_control_cb);
     protocol_add_command(MONITOR_MIDI_PROGRAM, monitor_midi_program_cb);
-    protocol_add_command(MIDI_MSG_OUT, midi_send_msg_out_cb);
+    protocol_add_command(MIDI_OUT, midi_out_cb);
     protocol_add_command(MIDI_LEARN, midi_learn_cb);
     protocol_add_command(MIDI_MAP, midi_map_cb);
     protocol_add_command(MIDI_UNMAP, midi_unmap_cb);

@@ -3928,25 +3928,6 @@ static void ExternalControllerWriteFunction(LV2UI_Controller controller,
 ************************************************************************************************************************
 */
 
-int midi_send_msg_out(const uint8_t* bytes, uint16_t len)
-{
-    if (g_midi_out_rb == NULL || len == 0 || len > MAX_MIDI_OUT_MSG_SIZE)
-        return 1;
-
-    const size_t need = sizeof(len) + len;
-    if (jack_ringbuffer_write_space(g_midi_out_rb) < need)
-        return 1;  // not enough room for the full message, drop it whole
-
-    char msg[sizeof(len) + MAX_MIDI_OUT_MSG_SIZE];
-
-    memcpy(msg, &len, sizeof(len));
-    memcpy(msg + sizeof(len), bytes, len);
-
-    jack_ringbuffer_write(g_midi_out_rb, msg, need);
-
-    return 0;
-}
-
 int effects_init(void* client)
 {
     /* This global client is for connections / disconnections and midi-learn */
@@ -3986,17 +3967,6 @@ int effects_init(void* client)
             jack_client_close(g_jack_global_client);
         return ERR_JACK_PORT_REGISTER;
     }
-
-    g_midi_out_rb = jack_ringbuffer_create(4 * (MAX_MIDI_OUT_MSG_SIZE + sizeof(uint16_t)));
-    if (g_midi_out_rb == NULL)
-    {
-        fprintf(stderr, "can't create global jack midi-out ringbuffer\n");
-        if (client == NULL)
-            jack_client_close(g_jack_global_client);
-        return ERR_JACK_PORT_REGISTER;  // TODO more specific error code?
-    }
-
-    jack_ringbuffer_mlock(g_midi_out_rb);
 
     if (g_jack_global_client != NULL && strcmp(jack_get_client_name(g_jack_global_client), "mod-host") == 0 && ! monitor_client_init())
     {
@@ -4065,6 +4035,18 @@ int effects_init(void* client)
             g_thread_policy = SCHED_OTHER;
         }
     }
+
+    /* midi output ringbuffer */
+    g_midi_out_rb = jack_ringbuffer_create(g_midi_buffer_size);
+    if (g_midi_out_rb == NULL)
+    {
+        fprintf(stderr, "can't create global jack midi-out ringbuffer\n");
+        if (client == NULL)
+            jack_client_close(g_jack_global_client);
+        return ERR_MEMORY_ALLOCATION;
+    }
+
+    jack_ringbuffer_mlock(g_midi_out_rb);
 
     /* initial transport state */
     g_transport_reset = true;
@@ -8369,6 +8351,21 @@ int effects_monitor_midi_program(int channel, int enable)
         return ERR_INVALID_OPERATION;
 
     g_monitored_midi_programs[channel] = enable != 0;
+    return SUCCESS;
+}
+
+int effects_midi_out(const uint8_t *data, uint8_t size)
+{
+    if (g_midi_out_rb == NULL || size == 0)
+        return ERR_INVALID_OPERATION;
+
+    // if not enough room for the full message, drop it whole
+    if (jack_ringbuffer_write_space(g_midi_out_rb) < (size_t)size + 1)
+        return ERR_MEMORY_ALLOCATION;
+
+    jack_ringbuffer_write(g_midi_out_rb, (char*)&size, 1);
+    jack_ringbuffer_write(g_midi_out_rb, (char*)data, size);
+
     return SUCCESS;
 }
 
