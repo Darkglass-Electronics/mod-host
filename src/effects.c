@@ -165,7 +165,6 @@ typedef struct {
 #include "rtmempool/rtmempool.h"
 #include "filter.h"
 
-static jack_ringbuffer_t* g_midi_out_rb = NULL;
 
 /*
 ************************************************************************************************************************
@@ -747,6 +746,7 @@ static pthread_mutex_t g_audio_monitor_mutex;
 static int g_audio_monitor_count;
 static jack_port_t *g_midi_in_port;
 static jack_port_t *g_midi_out_port;
+static jack_ringbuffer_t* g_midi_out_rb;
 static jack_position_t g_jack_pos;
 static bool g_jack_rolling;
 static uint32_t g_jack_xruns;
