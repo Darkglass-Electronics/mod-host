@@ -8356,7 +8356,7 @@ int effects_midi_out(const char *data, int size)
         return ERR_MEMORY_ALLOCATION;
 
     const uint8_t u8size = size;
-    jack_ringbuffer_write(g_midi_out_rb, (char*)&u8size, 1);
+    jack_ringbuffer_write(g_midi_out_rb, (const char*)&u8size, 1);
     jack_ringbuffer_write(g_midi_out_rb, data, size);
 
     return SUCCESS;
