@@ -90,6 +90,7 @@ typedef unsigned int uint;
 #include <lv2/worker/worker.h>
 #include "lv2/control-input-port-change-request.h"
 #include "lv2/control-port-state-update.h"
+#include "lv2/darkglass-license.h"
 #include "lv2/kxstudio-properties.h"
 #include "lv2/mod-license.h"
 
@@ -254,6 +255,7 @@ enum {
     URID_UNMAP_FEATURE,
     OPTIONS_FEATURE,
     LICENSE_FEATURE,
+    MOD_LICENSE_FEATURE,
     BUF_SIZE_POWER2_FEATURE,
     BUF_SIZE_FIXED_FEATURE,
     BUF_SIZE_BOUNDED_FEATURE,
@@ -407,7 +409,8 @@ typedef struct EFFECT_T {
     uint32_t presets_count;
 
     worker_t worker;
-    const MOD_License_Interface *license_iface;
+    const MOD_License_Interface *mod_license_iface;
+    const LV2_License_Interface *license_iface;
     const LV2_Options_Interface *options_interface;
     const LV2_State_Interface *state_iface;
 
@@ -477,6 +480,7 @@ typedef struct LILV_NODES_T {
     LilvNode *minimumSize;
     LilvNode *mod_cvport;
     LilvNode *mod_default;
+    LilvNode *mod_license_interface;
     LilvNode *mod_maximum;
     LilvNode *mod_minimum;
     LilvNode *noPreRun;
@@ -771,8 +775,9 @@ static char *g_lv2_scratch_dir;
 static Symap* g_symap;
 static lilv_nodes_t g_lilv_nodes;
 static urids_t g_urids;
-static MOD_License_Feature g_license;
+static MOD_License_Feature g_mod_license;
 static LV2_Atom_Forge g_lv2_atom_forge;
+static LV2_License_Feature g_license;
 static LV2_Log_Log g_lv2_log;
 static LV2_Options_Option g_options[9];
 static LV2_State_Free_Path g_state_freePath;
@@ -798,7 +803,8 @@ static LV2_Feature g_buf_size_features[3] = {
     { LV2_BUF_SIZE__fixedBlockLength, NULL },
     { LV2_BUF_SIZE__boundedBlockLength, NULL }
 };
-static LV2_Feature g_license_feature = { MOD_LICENSE__feature, &g_license };
+static LV2_Feature g_mod_license_feature = { MOD_LICENSE__feature, &g_mod_license };
+static LV2_Feature g_license_feature = { DARKGLASS_LICENSE__feature, &g_license };
 static LV2_Feature g_lv2_log_feature = { LV2_LOG__log, &g_lv2_log };
 static LV2_Feature g_options_feature = { LV2_OPTIONS__options, &g_options };
 static LV2_Feature g_state_freePath_feature = { LV2_STATE__freePath, &g_state_freePath };
@@ -865,7 +871,7 @@ static void FreeFeatures(effect_t *effect);
 static void FreePluginString(void* handle, char *str);
 static void ConnectToAllHardwareMIDIPorts(void);
 static void ConnectToMIDIThroughPorts(void);
-static char *GetLicenseFile(MOD_License_Handle handle, const char *license_uri);
+static char *GetLicenseFile(void* handle, const char *license_uri);
 static int LogPrintf(LV2_Log_Handle handle, LV2_URID type, const char *fmt, ...);
 static int LogVPrintf(LV2_Log_Handle handle, LV2_URID type, const char *fmt, va_list ap);
 static LV2_ControlInputPort_Change_Status RequestControlPortChange(LV2_ControlInputPort_Change_Request_Handle handle,
@@ -1469,7 +1475,7 @@ static void RunPostPonedEvents(int ignored_effect_id)
                     jack_ringbuffer_read(effect->events_out_buffer, (char*)&key, sizeof(uint32_t));
                     jack_ringbuffer_read(effect->events_out_buffer, (char*)&atom, sizeof(LV2_Atom));
 
-                    char *body = calloc(1, atom.size);
+                    char *body = calloc(1, atom.size + 1);
                     jack_ringbuffer_read(effect->events_out_buffer, body, atom.size);
 
                     supported = true;
@@ -3337,6 +3343,7 @@ static void GetFeatures(effect_t *effect)
     features[URID_UNMAP_FEATURE]        = &g_urid_unmap_feature;
     features[OPTIONS_FEATURE]           = &g_options_feature;
     features[LICENSE_FEATURE]           = &g_license_feature;
+    features[MOD_LICENSE_FEATURE]       = &g_mod_license_feature;
     features[BUF_SIZE_POWER2_FEATURE]   = &g_buf_size_features[0];
     features[BUF_SIZE_FIXED_FEATURE]    = &g_buf_size_features[1];
     features[BUF_SIZE_BOUNDED_FEATURE]  = &g_buf_size_features[2];
@@ -3602,7 +3609,7 @@ static void ConnectToMIDIThroughPorts(void)
     }
 }
 
-static char* GetLicenseFile(MOD_License_Handle handle, const char *license_uri)
+static char* GetLicenseFile(void* handle, const char *license_uri)
 {
     if (!license_uri || *license_uri == '\0')
         return NULL;
@@ -4217,7 +4224,7 @@ int effects_init(void* client)
     g_lilv_nodes.freeWheeling = lilv_new_uri(g_lv2_data, LV2_CORE__freeWheeling);
     g_lilv_nodes.input = lilv_new_uri(g_lv2_data, LILV_URI_INPUT_PORT);
     g_lilv_nodes.integer = lilv_new_uri(g_lv2_data, LV2_CORE__integer);
-    g_lilv_nodes.license_interface = lilv_new_uri(g_lv2_data, MOD_LICENSE__interface);
+    g_lilv_nodes.license_interface = lilv_new_uri(g_lv2_data, DARKGLASS_LICENSE__interface);
     g_lilv_nodes.is_live = lilv_new_uri(g_lv2_data, LV2_CORE__isLive);
     g_lilv_nodes.logarithmic = lilv_new_uri(g_lv2_data, LV2_PORT_PROPS__logarithmic);
     g_lilv_nodes.maximum = lilv_new_uri(g_lv2_data, LV2_CORE__maximum);
@@ -4226,6 +4233,7 @@ int effects_init(void* client)
     g_lilv_nodes.minimumSize = lilv_new_uri(g_lv2_data, LV2_RESIZE_PORT__minimumSize);
     g_lilv_nodes.mod_cvport = lilv_new_uri(g_lv2_data, LILV_NS_MOD "CVPort");
     g_lilv_nodes.mod_default = lilv_new_uri(g_lv2_data, LILV_NS_MOD "default");
+    g_lilv_nodes.mod_license_interface = lilv_new_uri(g_lv2_data, MOD_LICENSE__interface);
     g_lilv_nodes.mod_maximum = lilv_new_uri(g_lv2_data, LILV_NS_MOD "maximum");
     g_lilv_nodes.mod_minimum = lilv_new_uri(g_lv2_data, LILV_NS_MOD "minimum");
     g_lilv_nodes.noPreRun = lilv_new_uri(g_lv2_data, "http://www.darkglass.com/lv2/ns#noPreRun");
@@ -4375,6 +4383,10 @@ int effects_init(void* client)
     g_options[8].type = 0;
     g_options[8].value = NULL;
 
+    g_mod_license.handle = NULL;
+    g_mod_license.license = GetLicenseFile;
+    g_mod_license.free = FreePluginString;
+
     g_license.handle = NULL;
     g_license.license = GetLicenseFile;
     g_license.free = FreePluginString;
@@ -4494,6 +4506,7 @@ int effects_finish(int close_client)
     lilv_node_free(g_lilv_nodes.minimumSize);
     lilv_node_free(g_lilv_nodes.mod_cvport);
     lilv_node_free(g_lilv_nodes.mod_default);
+    lilv_node_free(g_lilv_nodes.mod_license_interface);
     lilv_node_free(g_lilv_nodes.mod_maximum);
     lilv_node_free(g_lilv_nodes.mod_minimum);
     lilv_node_free(g_lilv_nodes.noPreRun);
@@ -4707,6 +4720,13 @@ int effects_add(const char *uri, int instance, int activate)
     if (lilv_plugin_has_extension_data(effect->lilv_plugin, g_lilv_nodes.license_interface))
     {
         effect->license_iface =
+            (const LV2_License_Interface*) lilv_instance_get_extension_data(lilv_instance,
+                                                                            DARKGLASS_LICENSE__interface);
+    }
+
+    if (lilv_plugin_has_extension_data(effect->lilv_plugin, g_lilv_nodes.mod_license_interface))
+    {
+        effect->mod_license_iface =
             (const MOD_License_Interface*) lilv_instance_get_extension_data(lilv_instance,
                                                                             MOD_LICENSE__interface);
     }
@@ -7428,8 +7448,23 @@ int effects_licensee(int effect_id, char **licensee_ptr)
         char* licensee = NULL;
         LV2_Handle handle = lilv_instance_get_handle(effect->lilv_instance);
 
-        if (effect->license_iface->status(handle) == MOD_LICENSE_SUCCESS)
+        if (effect->license_iface->status(handle) == LV2_LICENSE_SUCCESS)
             licensee = effect->license_iface->licensee(handle);
+
+        if (licensee)
+        {
+            *licensee_ptr = licensee;
+            return SUCCESS;
+        }
+    }
+
+    if (effect->mod_license_iface)
+    {
+        char* licensee = NULL;
+        LV2_Handle handle = lilv_instance_get_handle(effect->lilv_instance);
+
+        if (effect->mod_license_iface->status(handle) == MOD_LICENSE_SUCCESS)
+            licensee = effect->mod_license_iface->licensee(handle);
 
         if (licensee)
         {
