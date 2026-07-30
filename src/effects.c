@@ -2732,43 +2732,10 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
     }
 #endif
 
-    if (g_midi_out_rb != NULL)
-    {
-        void* const out_buf = jack_port_get_buffer(g_midi_out_port, nframes);
-        jack_midi_clear_buffer(out_buf);
-
-        for (;;)
-        {
-            uint16_t len;
-            if (jack_ringbuffer_read_space(g_midi_out_rb) < sizeof(len))
-                break;
-            jack_ringbuffer_peek(g_midi_out_rb, (char*)&len, sizeof(len));
-
-            if (len == 0 || len > MAX_MIDI_OUT_MSG_SIZE)
-            {
-                jack_ringbuffer_read_advance(g_midi_out_rb,
-                                             jack_ringbuffer_read_space(g_midi_out_rb));
-                break;
-            }
-
-            if (jack_ringbuffer_read_space(g_midi_out_rb) < sizeof(len) + len)
-                break;
-
-            jack_ringbuffer_read_advance(g_midi_out_rb, sizeof(len));
-
-            jack_midi_data_t* ev = jack_midi_event_reserve(out_buf, 0, len);
-            if (ev != NULL)
-                jack_ringbuffer_read(g_midi_out_rb, (char*)ev, len);
-            else
-                jack_ringbuffer_read_advance(g_midi_out_rb, len);
-        }
-    }
-
     // Handle input MIDI events
-    void *const port_buf = jack_port_get_buffer(g_midi_in_port, nframes);
-    const jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
+    void *port_buf = jack_port_get_buffer(g_midi_in_port, nframes);
 
-    for (jack_nframes_t i = 0 ; i < event_count; i++)
+    for (jack_nframes_t i = 0, event_count = jack_midi_get_event_count(port_buf); i < event_count; i++)
     {
         if (jack_midi_event_get(&event, port_buf, i) != 0)
             break;
@@ -3075,6 +3042,26 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
                 }
             }
         }
+    }
+
+    // Handle output MIDI events
+    port_buf = jack_port_get_buffer(g_midi_out_port, nframes);
+    jack_midi_clear_buffer(port_buf);
+
+    for (uint8_t len; jack_ringbuffer_read_space(g_midi_out_rb) >= 2;)
+    {
+        if (jack_ringbuffer_peek(g_midi_out_rb, (char*)&len, 1) != 1)
+            break;
+        if (jack_ringbuffer_read_space(g_midi_out_rb) < (size_t)len + 1)
+            break;
+
+        jack_ringbuffer_read_advance(g_midi_out_rb, 1);
+
+        jack_midi_data_t *ev = jack_midi_event_reserve(port_buf, 0, len);
+        if (ev != NULL)
+            jack_ringbuffer_read(g_midi_out_rb, (char*)ev, len);
+        else
+            jack_ringbuffer_read_advance(g_midi_out_rb, len);
     }
 
     // Handle audio monitors
