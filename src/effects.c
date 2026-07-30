@@ -165,7 +165,6 @@ typedef struct {
 #include "rtmempool/rtmempool.h"
 #include "filter.h"
 
-
 /*
 ************************************************************************************************************************
 *           LOCAL DEFINES
@@ -8347,17 +8346,18 @@ int effects_monitor_midi_program(int channel, int enable)
     return SUCCESS;
 }
 
-int effects_midi_out(const uint8_t *data, uint8_t size)
+int effects_midi_out(const char *data, int size)
 {
-    if (g_midi_out_rb == NULL || size == 0)
+    if (g_midi_out_rb == NULL || size <= 0 || size > UINT8_MAX)
         return ERR_INVALID_OPERATION;
 
     // if not enough room for the full message, drop it whole
     if (jack_ringbuffer_write_space(g_midi_out_rb) < (size_t)size + 1)
         return ERR_MEMORY_ALLOCATION;
 
-    jack_ringbuffer_write(g_midi_out_rb, (char*)&size, 1);
-    jack_ringbuffer_write(g_midi_out_rb, (char*)data, size);
+    const uint8_t u8size = size;
+    jack_ringbuffer_write(g_midi_out_rb, (char*)&u8size, 1);
+    jack_ringbuffer_write(g_midi_out_rb, data, size);
 
     return SUCCESS;
 }

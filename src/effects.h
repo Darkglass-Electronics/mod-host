@@ -32,8 +32,6 @@
 ************************************************************************************************************************
 */
 
-#include <stdint.h>
-
 
 /*
 ************************************************************************************************************************
@@ -193,7 +191,7 @@ int effects_monitor_audio_levels(const char *source_port_name, int enable);
 int effects_monitor_cpu_load(int enable, int num_effects, int *effects);
 int effects_monitor_midi_control(int channel, int enable);
 int effects_monitor_midi_program(int channel, int enable);
-int effects_midi_out(const uint8_t *data, uint8_t size);
+int effects_midi_out(const char *data, int size);
 void effects_transport(int rolling, double beats_per_bar, double beats_per_minute);
 int effects_transport_sync_mode(const char *mode);
 void effect_sync_scheduled_params(int realtime);
