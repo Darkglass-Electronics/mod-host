@@ -4404,7 +4404,7 @@ int effects_init(void* client)
         return ERR_JACK_CLIENT_ACTIVATION;
     }
 
-    /* Connect to midi-merger if avaiable */
+    /* Connect to midi-merger if available */
     g_aggregated_midi_enabled = jack_port_by_name(g_jack_global_client, "mod-midi-merger:out") != NULL;
 
     if (g_aggregated_midi_enabled)
@@ -4419,16 +4419,9 @@ int effects_init(void* client)
         ConnectToAllHardwareMIDIPorts();
     }
 
-    bool g_broadcaster_midi_available = jack_port_by_name(g_jack_global_client, "mod-midi-broadcaster:in") != NULL;
-
-    if (g_broadcaster_midi_available) {
-        const char *midi_out_port_name = jack_port_name(g_midi_out_port);
-        jack_connect(g_jack_global_client, midi_out_port_name, "mod-midi-broadcaster:in");
-        int rc = jack_connect(g_jack_global_client, midi_out_port_name, "mod-midi-broadcaster:in");
-        if (rc != 0 && rc != EEXIST) {
-            fprintf(stderr, "jack_connect %s -> mod-midi-broadcaster:in failed: %d\n",
-                midi_out_port_name, rc);
-        }
+    if (jack_port_by_name(g_jack_global_client, "mod-midi-broadcaster:in") != NULL) {
+        const char *ourportname = jack_port_name(g_midi_out_port);
+        jack_connect(g_jack_global_client, ourportname, "mod-midi-broadcaster:in");
     }
 
     g_processing_enabled = true;
