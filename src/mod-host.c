@@ -457,7 +457,7 @@ static void midi_out_cb(proto_t *proto)
     }
 
     for (int i = 0; i < size; i++)
-        data[i] = (uint8_t)atoi(proto->list[i + 2]);
+        data[i] = (uint8_t)strtol(proto->list[i + 2], NULL, 0);
 
     int resp = effects_midi_out(data, size);
     protocol_response_int(resp, proto);

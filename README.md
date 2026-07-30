@@ -212,6 +212,10 @@ The commands supported by mod-host are:
         * start MIDI learn for a control port
         e.g.: midi_learn 0 "gain" 0.0 1.0
 
+    midi_out <size> <byte 1> <byte 2> ...
+        * send out a MIDI message
+        e.g.: midi_out 3 0x90 60 127
+
     midi_map <instance_number> <param_symbol> <midi_channel> <midi_cc> <minimum> <maximum>
         * map a MIDI controller to a control port
         e.g.: midi_map 0 "gain" 0 7 0.0 1.0
@@ -220,10 +224,6 @@ The commands supported by mod-host are:
     midi_unmap <instance_number> <param_symbol>
         * unmap the MIDI controller from a control port
         e.g.: midi_unmap 0 "gain"
-
-    midi_msg_out <msg_size> <byte 1> <byte 2> ...
-        * Send a MIDI out message
-        e.g.: midi_msg_out 3 0x90 60 127
 
     monitor_audio_levels <source_port_name> <enable>
         * monitor audio levels for a specific jack port (on the feedback port)
