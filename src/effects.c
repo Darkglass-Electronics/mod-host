@@ -744,6 +744,8 @@ static audio_monitor_t *g_audio_monitors;
 static pthread_mutex_t g_audio_monitor_mutex;
 static int g_audio_monitor_count;
 static jack_port_t *g_midi_in_port;
+static jack_port_t *g_midi_out_port;
+static jack_ringbuffer_t* g_midi_out_rb;
 static jack_position_t g_jack_pos;
 static bool g_jack_rolling;
 static uint32_t g_jack_xruns;
@@ -2730,10 +2732,9 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
 #endif
 
     // Handle input MIDI events
-    void *const port_buf = jack_port_get_buffer(g_midi_in_port, nframes);
-    const jack_nframes_t event_count = jack_midi_get_event_count(port_buf);
+    void *port_buf = jack_port_get_buffer(g_midi_in_port, nframes);
 
-    for (jack_nframes_t i = 0 ; i < event_count; i++)
+    for (jack_nframes_t i = 0, event_count = jack_midi_get_event_count(port_buf); i < event_count; i++)
     {
         if (jack_midi_event_get(&event, port_buf, i) != 0)
             break;
@@ -3040,6 +3041,26 @@ static int ProcessGlobalClient(jack_nframes_t nframes, void *arg)
                 }
             }
         }
+    }
+
+    // Handle output MIDI events
+    port_buf = jack_port_get_buffer(g_midi_out_port, nframes);
+    jack_midi_clear_buffer(port_buf);
+
+    for (uint8_t len; jack_ringbuffer_read_space(g_midi_out_rb) >= 2;)
+    {
+        if (jack_ringbuffer_peek(g_midi_out_rb, (char*)&len, 1) != 1)
+            break;
+        if (jack_ringbuffer_read_space(g_midi_out_rb) < (size_t)len + 1)
+            break;
+
+        jack_ringbuffer_read_advance(g_midi_out_rb, 1);
+
+        jack_midi_data_t *ev = jack_midi_event_reserve(port_buf, 0, len);
+        if (ev != NULL)
+            jack_ringbuffer_read(g_midi_out_rb, (char*)ev, len);
+        else
+            jack_ringbuffer_read_advance(g_midi_out_rb, len);
     }
 
     // Handle audio monitors
@@ -3936,6 +3957,16 @@ int effects_init(void* client)
         return ERR_JACK_PORT_REGISTER;
     }
 
+    g_midi_out_port = jack_port_register(g_jack_global_client, "midi_out",
+                                         JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+    if (! g_midi_out_port)
+    {
+        fprintf(stderr, "can't register global jack midi-out port\n");
+        if (client == NULL)
+            jack_client_close(g_jack_global_client);
+        return ERR_JACK_PORT_REGISTER;
+    }
+
     if (g_jack_global_client != NULL && strcmp(jack_get_client_name(g_jack_global_client), "mod-host") == 0 && ! monitor_client_init())
     {
         return ERR_JACK_CLIENT_CREATION;
@@ -4003,6 +4034,18 @@ int effects_init(void* client)
             g_thread_policy = SCHED_OTHER;
         }
     }
+
+    /* midi output ringbuffer */
+    g_midi_out_rb = jack_ringbuffer_create(g_midi_buffer_size);
+    if (g_midi_out_rb == NULL)
+    {
+        fprintf(stderr, "can't create global jack midi-out ringbuffer\n");
+        if (client == NULL)
+            jack_client_close(g_jack_global_client);
+        return ERR_MEMORY_ALLOCATION;
+    }
+
+    jack_ringbuffer_mlock(g_midi_out_rb);
 
     /* initial transport state */
     g_transport_reset = true;
@@ -4360,7 +4403,7 @@ int effects_init(void* client)
         return ERR_JACK_CLIENT_ACTIVATION;
     }
 
-    /* Connect to midi-merger if avaiable */
+    /* Connect to midi-merger if available */
     g_aggregated_midi_enabled = jack_port_by_name(g_jack_global_client, "mod-midi-merger:out") != NULL;
 
     if (g_aggregated_midi_enabled)
@@ -4373,6 +4416,11 @@ int effects_init(void* client)
     else
     {
         ConnectToAllHardwareMIDIPorts();
+    }
+
+    if (jack_port_by_name(g_jack_global_client, "mod-midi-broadcaster:in") != NULL) {
+        const char *ourportname = jack_port_name(g_midi_out_port);
+        jack_connect(g_jack_global_client, ourportname, "mod-midi-broadcaster:in");
     }
 
     g_processing_enabled = true;
@@ -8295,6 +8343,22 @@ int effects_monitor_midi_program(int channel, int enable)
         return ERR_INVALID_OPERATION;
 
     g_monitored_midi_programs[channel] = enable != 0;
+    return SUCCESS;
+}
+
+int effects_midi_out(const char *data, int size)
+{
+    if (g_midi_out_rb == NULL || size <= 0 || size > UINT8_MAX)
+        return ERR_INVALID_OPERATION;
+
+    // if not enough room for the full message, drop it whole
+    if (jack_ringbuffer_write_space(g_midi_out_rb) < (size_t)size + 1)
+        return ERR_MEMORY_ALLOCATION;
+
+    const uint8_t u8size = size;
+    jack_ringbuffer_write(g_midi_out_rb, (const char*)&u8size, 1);
+    jack_ringbuffer_write(g_midi_out_rb, data, size);
+
     return SUCCESS;
 }
 

@@ -406,7 +406,7 @@ static void monitor_audio_levels_cb(proto_t *proto)
 static void monitor_cpu_load_cb(proto_t *proto)
 {
     int instance_count = atoi(proto->list[2]);
-    if (instance_count == 0)
+    if (instance_count <= 0)
     {
         protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
         return;
@@ -465,6 +465,24 @@ static void midi_unmap_cb(proto_t *proto)
 {
     int resp;
     resp = !effects_midi_unmap(atoi(proto->list[1]), proto->list[2]);
+    protocol_response_int(resp, proto);
+}
+
+static void midi_out_cb(proto_t *proto)
+{
+    uint8_t data[UINT8_MAX];
+
+    int size = atoi(proto->list[1]);
+    if (size <= 0 || size > UINT8_MAX)
+    {
+        protocol_response_int(ERR_ASSIGNMENT_INVALID_OP, proto);
+        return;
+    }
+
+    for (int i = 0; i < size; i++)
+        data[i] = (uint8_t)strtol(proto->list[i + 2], NULL, 0);
+
+    int resp = effects_midi_out((const char*)data, size);
     protocol_response_int(resp, proto);
 }
 
@@ -1050,6 +1068,7 @@ static int mod_host_init(jack_client_t* client, int socket_port, int feedback_po
     protocol_add_command(MIDI_LEARN, midi_learn_cb);
     protocol_add_command(MIDI_MAP, midi_map_cb);
     protocol_add_command(MIDI_UNMAP, midi_unmap_cb);
+    protocol_add_command(MIDI_OUT, midi_out_cb);
     protocol_add_command(CPU_LOAD, cpu_load_cb);
     protocol_add_command(MAX_CPU_LOAD, max_cpu_load_cb);
 #ifndef SKIP_READLINE
