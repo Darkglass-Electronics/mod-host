@@ -273,9 +273,6 @@ int jack_initialize(jack_client_t* client, const char* load_init)
     mon->step_volume = 0.f;
 
     /* Register jack ports */
-   #if defined(_DARKGLASS_DEVICE_PABLITO)
-    const uint32_t numports = 10;
-   #else
     uint32_t numports = 0;
 
     const char** const sysports = jack_get_ports(client, "system:playback_", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput);
@@ -292,7 +289,6 @@ int jack_initialize(jack_client_t* client, const char* load_init)
         free(mon);
         return 1;
     }
-   #endif
 
     mon->numports = numports;
     mon->in_ports = malloc(sizeof(jack_port_t*) * numports);
@@ -355,26 +351,12 @@ int jack_initialize(jack_client_t* client, const char* load_init)
 
     const char* const ourclientname = jack_get_client_name(client);
 
-   #if defined(_DARKGLASS_DEVICE_PABLITO)
-    snprintf(ourportname, MAX_CHAR_BUF_SIZE, "%s:in_9", ourclientname);
-    jack_connect(client, "anagram-output:out1", ourportname);
-
-    snprintf(ourportname, MAX_CHAR_BUF_SIZE, "%s:in_10", ourclientname);
-    jack_connect(client, "anagram-output:out2", ourportname);
-
-    snprintf(ourportname, MAX_CHAR_BUF_SIZE, "%s:out_5", ourclientname);
-    jack_connect(client, ourportname, "system:playback_5");
-
-    snprintf(ourportname, MAX_CHAR_BUF_SIZE, "%s:out_6", ourclientname);
-    jack_connect(client, ourportname, "system:playback_6");
-   #else
     for (uint32_t i=0; i<numports; ++i)
     {
         snprintf(ourportname, MAX_CHAR_BUF_SIZE, "%s:out_%d", ourclientname, i + 1);
         snprintf(portname, MAX_CHAR_BUF_SIZE, "system:playback_%d", i + 1);
         jack_connect(client, ourportname, portname);
     }
-   #endif
 
     return 0;
 
