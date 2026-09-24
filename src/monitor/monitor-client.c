@@ -192,6 +192,17 @@ static int ProcessMonitor(jack_nframes_t nframes, void *arg)
         }
     }
 
+    // TESTING phase flip
+    for (jack_nframes_t i=0; i<nframes; ++i)
+    {
+        bufOut[0][i] *= -1.f;
+        bufOut[1][i] *= -1.f;
+        bufOut[4][i] *= -1.f;
+        bufOut[5][i] *= -1.f;
+        bufOut[6][i] *= -1.f;
+        bufOut[7][i] *= -1.f;
+    }
+
     // we use `floats_differ_enough` here as a safe `!=` float value comparison
     mon->apply_volume = floats_differ_enough(smooth_volume, 1.0f);
     mon->smooth_volume = smooth_volume;
