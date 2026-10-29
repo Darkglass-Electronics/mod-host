@@ -89,9 +89,13 @@ typedef enum {
 *           CONFIGURATION DEFINES
 ************************************************************************************************************************
 */
-
+#ifdef _DARKGLASS_DEVICE_PABLITO
+#define MAX_PLUGIN_INSTANCES    450
+#define MAX_TOOL_INSTANCES      50
+#else
 #define MAX_PLUGIN_INSTANCES    9990
 #define MAX_TOOL_INSTANCES      10
+#endif
 #define MAX_INSTANCES           (MAX_PLUGIN_INSTANCES + MAX_TOOL_INSTANCES)
 #define MAX_MIDI_CC_ASSIGN      1024
 #define MAX_POSTPONED_EVENTS    8192
