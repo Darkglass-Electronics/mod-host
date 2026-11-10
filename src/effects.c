@@ -172,7 +172,7 @@ typedef struct {
 */
 
 #define REMOVE_ALL        (-1)
-#define GLOBAL_EFFECT_ID  (9995)
+#define GLOBAL_EFFECT_ID  (MAX_INSTANCES - 1)
 
 #define ASSIGNMENT_UNUSED -1 // item was used before, so there might other valid items after this one
 #define ASSIGNMENT_NULL   -2 // item never used before, thus signaling the end of valid items
